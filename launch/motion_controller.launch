@@ -1,0 +1,13 @@
+<launch>
+    <!-- 基础控制层 -->
+    <node name="enhanced_motion_controller" pkg="transbot_manager" type="enhanced_motion_controller.py" output="screen">
+        <param name="robot_id" value="$(arg robot_id)"/>
+        <param name="cmd_timeout" value="2.0"/>
+        <param name="battery_warning_level" value="20.0"/>
+        <remap from="/cmd_vel" to="/cmd_vel"/>
+        <remap from="/odom" to="/odom"/>
+        <remap from="/scan" to="/scan"/>
+    </node>
+    
+    <arg name="robot_id" default="transbot_001"/>
+</launch>

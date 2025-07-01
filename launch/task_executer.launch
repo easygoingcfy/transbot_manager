@@ -1,0 +1,10 @@
+<launch>
+    <!-- 任务执行层 -->
+    <node name="cloud_task_receiver" pkg="transbot_manager" type="cloud_task_receiver.py" output="screen">
+        <param name="task_timeout" value="300.0"/>
+        <param name="retry_attempts" value="3"/>
+    </node>
+    
+    <!-- 系统协调器 -->
+    <node name="system_coordinator" pkg="transbot_manager" type="system_coordinator.py" output="screen"/>
+</launch>

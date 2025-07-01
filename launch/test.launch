@@ -1,0 +1,18 @@
+<launch>
+    <!-- 启动模拟传感器 -->
+    <node name="mock_sensors" pkg="transbot_manager" type="mock_sensors.py" output="screen"/>
+    
+    <!-- 启动完整系统 -->
+    <include file="$(find transbot_manager)/launch/transbot_full_system.launch">
+        <arg name="test_mode" value="true"/>
+    </include>
+    
+    <!-- 启动系统测试器 -->
+    <node name="system_tester" pkg="transbot_manager" type="system_tester.py" output="screen" launch-prefix="bash -c 'sleep 5; $0 $@'"/>
+    
+    <!-- 可视化工具 -->
+    <node name="rqt_console" pkg="rqt_console" type="rqt_console" if="$(arg show_gui)"/>
+    <node name="rqt_graph" pkg="rqt_graph" type="rqt_graph" if="$(arg show_gui)"/>
+    
+    <arg name="show_gui" default="false"/>
+</launch>

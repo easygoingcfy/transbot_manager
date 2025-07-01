@@ -1,0 +1,44 @@
+<launch>
+    <!-- 参数配置 -->
+    <param name="robot_id" value="transbot_001"/>
+    <param name="use_sim_time" value="false"/>
+    
+    <!-- 基础控制层 -->
+    <node name="enhanced_motion_controller" pkg="transbot_manager" type="enhanced_motion_controller.py" output="screen">
+        <param name="cmd_timeout" value="2.0"/>
+        <param name="battery_warning_level" value="20.0"/>
+        <param name="status_publish_rate" value="5.0"/>
+        <param name="telemetry_rate" value="10.0"/>
+    </node>
+    
+    <!-- 系统协调器 -->
+    <node name="system_coordinator" pkg="transbot_manager" type="system_coordinator.py" output="screen"/>
+    
+    <!-- 任务执行层 -->
+    <node name="cloud_task_receiver" pkg="transbot_manager" type="cloud_task_receiver.py" output="screen">
+        <param name="task_timeout" value="300.0"/>
+        <param name="retry_attempts" value="3"/>
+    </node>
+    
+    <!-- 状态管理器 -->
+    <node name="task_status_manager" pkg="transbot_manager" type="task_status_manager.py" output="screen">
+        <param name="cloud_report_interval" value="2.0"/>
+    </node>
+    
+    <!-- 测试工具节点 (可选) -->
+    <group if="$(arg test_mode)" ns="test">
+        <node name="system_tester" pkg="transbot_manager" type="system_tester.py" output="screen"/>
+        <node name="mock_sensors" pkg="transbot_manager" type="mock_sensors.py" output="screen"/>
+    </group>
+    
+    <!-- 参数 -->
+    <arg name="test_mode" default="false"/>
+    <arg name="debug_mode" default="false"/>
+    
+    <!-- 调试模式 -->
+    <group if="$(arg debug_mode)">
+        <node name="rqt_console" pkg="rqt_console" type="rqt_console"/>
+        <node name="rqt_graph" pkg="rqt_graph" type="rqt_graph"/>
+    </group>
+    
+</launch>
