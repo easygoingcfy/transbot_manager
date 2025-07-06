@@ -1,14 +1,16 @@
 #!/usr/bin/env python
+#coding=utf-8
+import sys
+import os
 import rospy
 import threading
 import time
 import json
-from robot_enums import ControlMode, TaskState, SystemStatus
+from robot_enums import ControlMode, SystemStatus
 from std_msgs.msg import String, Header, Bool, Float32
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan, Image, BatteryState
-from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
 
 class EnhancedMotionController:
     """增强版机器人基础控制器 - 负责实时控制、状态监控、数据上报"""
@@ -27,7 +29,7 @@ class EnhancedMotionController:
         
         # 安全参数
         self.last_cmd_time = time.time()
-        self.cmd_timeout = 2.0
+        self.cmd_timeout = 60.0
         self.emergency_stop = False
         
         # 机器人状态数据
@@ -67,7 +69,7 @@ class EnhancedMotionController:
         self.camera_trigger_pub = rospy.Publisher('/camera/trigger', Bool, queue_size=1)
         
         # 状态上报
-        self.robot_status_pub = rospy.Publisher('/robot_status', DiagnosticStatus, queue_size=1)
+        self.robot_status_pub = rospy.Publisher('/robot_status', String, queue_size=1)
         self.cloud_report_pub = rospy.Publisher('/cloud_report', String, queue_size=1)
         self.telemetry_pub = rospy.Publisher('/robot_telemetry', String, queue_size=1)
         
@@ -107,7 +109,7 @@ class EnhancedMotionController:
         for thread in threads:
             thread.daemon = True
             thread.start()
-            rospy.loginfo(f"启动线程: {thread.name}")
+            rospy.loginfo("启动线程: {}".format(thread.name))
     
     # ================== 外部控制接口 ==================
     
@@ -126,17 +128,18 @@ class EnhancedMotionController:
                 old_mode = self.control_mode
                 self.control_mode = new_mode
                 
-                rospy.loginfo(f"控制模式切换: {old_mode.value} -> {new_mode.value}")
+                rospy.loginfo("控制模式切换: {} -> {}".format(old_mode.value, new_mode.value))
                 
                 # 模式切换处理
                 if new_mode in [ControlMode.PAUSE, ControlMode.STOP]:
                     self.cmd_vel_pub.publish(Twist())  # 立即停止
                     
-                self._publish_control_feedback(f"模式已切换到: {new_mode.value}")
+                self.last_cmd_time = time.time()
+                self._publish_control_feedback("模式已切换到: {}".format(new_mode.value))
                 
             except ValueError:
-                rospy.logwarn(f"收到未知控制模式: {msg.data}")
-                self._publish_control_feedback(f"未知控制模式: {msg.data}")
+                rospy.logwarn("收到未知控制模式: {}".format(msg.data))
+                self._publish_control_feedback("未知控制模式: {}".format(msg.data))
     
     def _remote_cmd_vel_callback(self, msg):
         """处理远程速度控制指令"""
@@ -146,7 +149,7 @@ class EnhancedMotionController:
                 self.last_cmd_time = time.time()
                 self._publish_control_feedback("速度指令已执行")
             else:
-                self._publish_control_feedback(f"速度指令被拒绝：当前模式 {self.control_mode.value}")
+                self._publish_control_feedback("速度指令被拒绝：当前模式 {}".format(self.control_mode.value))
     
     def _remote_goal_callback(self, msg):
         """处理远程导航目标"""
@@ -156,7 +159,7 @@ class EnhancedMotionController:
                 self.last_cmd_time = time.time()
                 self._publish_control_feedback("导航目标已设置")
             else:
-                self._publish_control_feedback(f"导航指令被拒绝：当前模式 {self.control_mode.value}")
+                self._publish_control_feedback("导航指令被拒绝：当前模式 {}".format(self.control_mode.value))
     
     def _remote_elevator_callback(self, msg):
         """处理升降杆控制指令"""
@@ -164,7 +167,7 @@ class EnhancedMotionController:
             self.elevator_enable_pub.publish(Bool(True))
             rospy.sleep(0.1)
             self.elevator_cmd_pub.publish(msg)
-            self._publish_control_feedback(f"升降杆目标位置: {msg.data}")
+            self._publish_control_feedback("升降杆目标位置: {}".format(msg.data))
         else:
             self._publish_control_feedback("升降杆指令被拒绝：紧急停止状态")
     
@@ -289,50 +292,70 @@ class EnhancedMotionController:
         rate = rospy.Rate(5)  # 5Hz
         while not rospy.is_shutdown():
             try:
-                status = DiagnosticStatus()
-                status.header = Header(stamp=rospy.Time.now())
-                status.name = "robot_controller"
-                status.level = self._get_diagnostic_level()
-                status.message = f"Mode: {self.control_mode.value}, Status: {self.system_status.value}"
-                
-                # 添加详细状态
+                # 发布JSON格式的状态信息
+                status_data = {
+                    "timestamp": rospy.Time.now().to_sec(),
+                    "node_name": "enhanced_motion_controller",
+                    "control_mode": self.control_mode.value if hasattr(self.control_mode, 'value') else str(self.control_mode),
+                    "system_status": self.system_status.value if hasattr(self.system_status, 'value') else str(self.system_status),
+                    "emergency_stop": self.emergency_stop,
+                    "task_active": self.task_layer_active
+                }
+
+                # 添加机器人状态数据
                 with self.data_lock:
                     if self.robot_state['pose']:
-                        status.values.append(KeyValue("pos_x", str(self.robot_state['pose']['x'])))
-                        status.values.append(KeyValue("pos_y", str(self.robot_state['pose']['y'])))
+                        status_data["position"] = {
+                            "x": self.robot_state['pose']['x'],
+                            "y": self.robot_state['pose']['y']
+                        }
                     
                     if self.robot_state['velocity']:
-                        status.values.append(KeyValue("vel_linear", str(self.robot_state['velocity']['linear_x'])))
-                        status.values.append(KeyValue("vel_angular", str(self.robot_state['velocity']['angular_z'])))
+                        status_data["velocity"] = {
+                            "linear": self.robot_state['velocity']['linear_x'],
+                            "angular": self.robot_state['velocity']['angular_z']
+                        }
                     
-                    status.values.append(KeyValue("battery", str(self.robot_state['battery'])))
-                    status.values.append(KeyValue("emergency_stop", str(self.emergency_stop)))
-                    status.values.append(KeyValue("task_active", str(self.task_layer_active)))
+                    status_data["battery"] = self.robot_state['battery']
+                    status_data["uptime"] = self.robot_state['uptime']
                 
-                self.robot_status_pub.publish(status)
+                # 发布String格式的状态
+                self.robot_status_pub.publish(json.dumps(status_data, ensure_ascii=False))
                 
             except Exception as e:
-                rospy.logerr(f"状态发布错误: {e}")
+                rospy.logerr("状态发布错误: {}".format(e))
             
             rate.sleep()
     
     def _safety_monitor_loop(self):
         """安全监控循环"""
         rate = rospy.Rate(10)  # 10Hz
+        timeout_warned = False
+
         while not rospy.is_shutdown():
             try:
                 with self.mode_lock:
                     # 指令超时检查
                     if self.control_mode == ControlMode.MANUAL:
                         if time.time() - self.last_cmd_time > self.cmd_timeout:
-                            self.cmd_vel_pub.publish(Twist())
-                            rospy.logwarn("手动控制指令超时，自动停止")
+                            if not timeout_warned:  # 只在第一次超时时处理
+                                self.cmd_vel_pub.publish(Twist())
+                                # 修改：超时时切换到暂停模式
+                                old_mode = self.control_mode
+                                self.control_mode = ControlMode.PAUSE
+                                rospy.logwarn("手动控制指令超时，切换到暂停模式: {} -> {}".format(old_mode.value, self.control_mode.value))
+                                self._publish_control_feedback("指令超时，已切换到暂停模式")
+                                timeout_warned = True
+                                self.last_cmd_time = time.time()
+                        else:
+                            timeout_warned = False  # 有新指令时重置标志
                     
                     # 电池电量检查
                     if self.robot_state['battery'] < 20.0:
                         if self.system_status == SystemStatus.NORMAL:
                             self.system_status = SystemStatus.WARNING
-                            rospy.logwarn(f"电池电量低: {self.robot_state['battery']:.1f}%")
+                            battery_level = round(self.robot_state['battery'], 1)
+                            rospy.logwarn("电池电量低: {}%".format(battery_level))
                     
                     # 传感器数据检查
                     current_time = time.time()
@@ -344,7 +367,7 @@ class EnhancedMotionController:
                     self.robot_state['uptime'] = current_time - self.start_time
                     
             except Exception as e:
-                rospy.logerr(f"安全监控错误: {e}")
+                rospy.logerr("安全监控错误: {}".format(e))
             
             rate.sleep()
     
@@ -355,7 +378,7 @@ class EnhancedMotionController:
             try:
                 report = {
                     "timestamp": time.time(),
-                    "robot_id": rospy.get_param('~robot_id', 'transbot_001'),
+                    "robot_id": rospy.get_param('robot_id', 'transbot_001'),
                     "control_mode": self.control_mode.value,
                     "system_status": self.system_status.value,
                     "task_active": self.task_layer_active,
@@ -366,7 +389,7 @@ class EnhancedMotionController:
                 self.cloud_report_pub.publish(json.dumps(report, ensure_ascii=False))
                 
             except Exception as e:
-                rospy.logerr(f"云端上报错误: {e}")
+                rospy.logerr("云端上报错误: {}".format(e))
             
             rate.sleep()
     
@@ -388,20 +411,11 @@ class EnhancedMotionController:
                 self.telemetry_pub.publish(json.dumps(telemetry, ensure_ascii=False))
                 
             except Exception as e:
-                rospy.logerr(f"遥测数据错误: {e}")
+                rospy.logerr("遥测数据错误: {}".format(e))
             
             rate.sleep()
     
     # ================== 辅助方法 ==================
-    
-    def _get_diagnostic_level(self):
-        """获取诊断级别"""
-        if self.system_status == SystemStatus.ERROR or self.emergency_stop:
-            return DiagnosticStatus.ERROR
-        elif self.system_status == SystemStatus.WARNING:
-            return DiagnosticStatus.WARN
-        else:
-            return DiagnosticStatus.OK
     
     def _publish_control_feedback(self, message):
         """发布控制反馈"""

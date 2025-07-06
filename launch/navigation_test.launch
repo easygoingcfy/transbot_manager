@@ -1,0 +1,14 @@
+<launch>
+    <!-- 导航测试专用启动文件 -->
+    <arg name="map_name" default="house"/>
+    <arg name="open_rviz" default="false"/>
+    
+    <!-- 启动完整系统包含导航 -->
+    <include file="$(find transbot_manager)/launch/start_all.launch">
+        <arg name="with_hardware" value="true"/>
+        <arg name="with_navigation" value="true"/>
+        <arg name="map_name" value="$(arg map_name)"/>
+        <arg name="open_rviz" value="$(arg open_rviz)"/>
+        <arg name="debug_mode" value="true"/>
+    </include>
+</launch>

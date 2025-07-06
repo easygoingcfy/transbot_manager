@@ -1,11 +1,31 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# filepath: /home/jetson/transbot_ws/src/transbot_manager/scripts/task_composer.py
+
 import rospy
+import math
 from robot_enums import TaskResult
 from behavior_factory import BehaviorFactory
 from geometry_msgs.msg import PoseStamped, Quaternion
-from tf.transformations import quaternion_from_euler
 
-class TaskNode:
+# 简单的四元数转换函数，避免tf依赖
+def quaternion_from_euler(roll, pitch, yaw):
+    """欧拉角转四元数"""
+    cy = math.cos(yaw * 0.5)
+    sy = math.sin(yaw * 0.5)
+    cp = math.cos(pitch * 0.5)
+    sp = math.sin(pitch * 0.5)
+    cr = math.cos(roll * 0.5)
+    sr = math.sin(roll * 0.5)
+
+    w = cr * cp * cy + sr * sp * sy
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+
+    return [x, y, z, w]
+
+class TaskNode(object):
     """任务节点基类"""
     def __init__(self, name):
         self.name = name
@@ -27,20 +47,21 @@ class TaskNode:
 class SequenceNode(TaskNode):
     """顺序执行节点 - 所有子节点必须成功"""
     def execute(self):
-        rospy.loginfo(f"执行序列: {self.name}")
+        rospy.loginfo("执行序列: {}".format(self.name))
         for child in self.children:
             if self._cancelled:
                 return TaskResult.CANCELLED
             result = child.execute()
             if result != TaskResult.SUCCESS:
-                rospy.logwarn(f"序列节点 {self.name} 中的 {child.name} 执行失败")
+                # 修复字符串格式化
+                rospy.logwarn("序列节点 {} 中的 {} 执行失败".format(self.name, child.name))
                 return result
         return TaskResult.SUCCESS
 
 class SelectorNode(TaskNode):
     """选择执行节点 - 任一子节点成功即可"""
     def execute(self):
-        rospy.loginfo(f"执行选择: {self.name}")
+        rospy.loginfo("执行选择: {}".format(self.name))
         for child in self.children:
             if self._cancelled:
                 return TaskResult.CANCELLED
@@ -50,24 +71,15 @@ class SelectorNode(TaskNode):
         return TaskResult.FAILURE
 
 class ParallelNode(TaskNode):
-    """并行执行节点 - 同时执行多个子节点"""
+    """并行执行节点 - 简化为顺序执行（避免复杂性）"""
     def execute(self):
-        rospy.loginfo(f"执行并行: {self.name}")
-        import threading
+        rospy.loginfo("执行并行（简化为顺序）: {}".format(self.name))
         results = []
-        threads = []
-        
-        def execute_child(child, results, index):
-            results[index] = child.execute()
-        
-        results = [None] * len(self.children)
-        for i, child in enumerate(self.children):
-            thread = threading.Thread(target=execute_child, args=(child, results, i))
-            threads.append(thread)
-            thread.start()
-        
-        for thread in threads:
-            thread.join()
+        for child in self.children:
+            if self._cancelled:
+                return TaskResult.CANCELLED
+            result = child.execute()
+            results.append(result)
         
         # 所有任务都必须成功
         return TaskResult.SUCCESS if all(r == TaskResult.SUCCESS for r in results) else TaskResult.FAILURE
@@ -75,13 +87,13 @@ class ParallelNode(TaskNode):
 class ActionNode(TaskNode):
     """原子行为执行节点"""
     def __init__(self, name, behavior_type, **params):
-        super().__init__(name)
+        super(ActionNode, self).__init__(name)
         self.behavior_type = behavior_type
         self.params = params
         self.behavior = None
         
     def execute(self):
-        rospy.loginfo(f"执行原子行为: {self.name}")
+        rospy.loginfo("执行原子行为: {}".format(self.name))
         try:
             self.behavior = BehaviorFactory.get_behavior(self.behavior_type)
             
@@ -96,12 +108,13 @@ class ActionNode(TaskNode):
             
             return self.behavior.execute(**self.params)
         except Exception as e:
-            rospy.logerr(f"行为执行错误: {e}")
+            rospy.logerr("行为执行错误: {}".format(e))
             return TaskResult.FAILURE
     
     def cancel(self):
         if self.behavior:
             self.behavior.cancel()
+        super(ActionNode, self).cancel()
     
     def create_pose(self, x, y, theta):
         """创建位姿消息"""
@@ -116,41 +129,14 @@ class ActionNode(TaskNode):
         
         return pose
 
-class TaskComposer:
+class TaskComposer(object):
     """任务组合器"""
     
-    # ...existing code...
-    
     @staticmethod
-    def create_comprehensive_task():
-        """创建综合测试任务"""
-        main_task = SequenceNode("综合测试任务")
-        
-        # 初始化
-        main_task.add_child(ActionNode("系统初始化", "speak", text="机器人系统启动"))
-        main_task.add_child(ActionNode("LED指示", "peripheral_control", device_type="led", state=True))
-        
-        # 巡逻任务
-        patrol = SequenceNode("巡逻任务")
-        patrol.add_child(ActionNode("开始巡逻", "speak", text="开始执行巡逻任务"))
-        patrol.add_child(ActionNode("导航1", "navigate", x=2.0, y=1.0, theta=0.0))
-        patrol.add_child(ActionNode("拍照1", "capture_image", save_path="/tmp/patrol_1.jpg"))
-        patrol.add_child(ActionNode("导航2", "navigate", x=1.0, y=2.0, theta=1.57))
-        
-        main_task.add_child(patrol)
-        
-        # 检查任务（选择性）
-        inspection = SelectorNode("检查任务")
-        for i in range(3):
-            check_point = SequenceNode(f"检查点{i+1}")
-            check_point.add_child(ActionNode(f"导航检查{i+1}", "navigate", x=float(i), y=float(i), theta=0.0))
-            check_point.add_child(ActionNode(f"检查拍照{i+1}", "capture_image"))
-            inspection.add_child(check_point)
-        
-        main_task.add_child(inspection)
-        
-        # 完成
-        main_task.add_child(ActionNode("任务完成", "speak", text="所有任务已完成"))
-        main_task.add_child(ActionNode("LED关闭", "peripheral_control", device_type="led", state=False))
-        
+    def create_simple_test():
+        """创建简单测试任务"""
+        main_task = SequenceNode("简单测试")
+        main_task.add_child(ActionNode("开始", "speak", text="开始测试"))
+        main_task.add_child(ActionNode("等待", "wait", duration=2.0))
+        main_task.add_child(ActionNode("结束", "speak", text="测试完成"))
         return main_task

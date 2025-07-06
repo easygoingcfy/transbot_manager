@@ -1,10 +1,68 @@
 <launch>
+    <!-- 参数 -->
+    <arg name="test_mode" default="false"/>
+    <arg name="debug_mode" default="false"/>
+    <arg name="log_level" default="info"/>
+    <arg name="with_hardware" default="true"/>
+    <arg name="with_navigation" default="false"/>  <!-- 是否启动导航 -->
+    <arg name="map_name" default="house"/>         <!-- 地图名称 -->
+    <arg name="open_rviz" default="false"/>       <!-- 是否打开rviz -->
+
+    <!-- 环境变量设置 - 日志格式 -->
+    <env name="ROSCONSOLE_FORMAT" value="[${severity}] [${time}] [${node}:${file}: ${line}]: ${message}"/>
+    
     <!-- 参数配置 -->
     <param name="robot_id" value="transbot_001"/>
     <param name="use_sim_time" value="false"/>
+
+    <!-- ========== 硬件驱动层 ========== -->
+    <group if="$(arg with_hardware)">
+        <!-- 底盘驱动 -->
+        <include file="$(find transbot_bringup)/launch/bringup.launch"/>
+
+        <!-- 导航需要的传感器 -->
+        <group if="$(arg with_navigation)">
+            <!-- 激光雷达 - 导航必需 -->
+            <include file="$(find transbot_nav)/launch/library/rplidar.launch"/>
+            <node pkg="tf" type="static_transform_publisher" name="base_link_to_laser"
+                  args="-0.03 0 0.13 3.1416 0 0  /base_link /laser  30"/>
+            
+            <!-- 相机 -->
+            <include file="$(find astra_camera)/launch/astrapro.launch"/>
+            <node pkg="tf" type="static_transform_publisher" name="base_link_to_camera"
+                  args="0.08 0 0.10403 -0.05 0 0  /base_link /camera_link  30"/>
+        </group>
+
+    </group>
+
+        <!-- ========== 导航系统 ========== -->
+    <group if="$(arg with_navigation)">
+        <!-- 地图服务器 -->
+        <node name="map_server" pkg="map_server" type="map_server" 
+              args="$(find transbot_nav)/maps/$(arg map_name).yaml" output="screen"/>
+        
+        <!-- AMCL定位 -->
+        <include file="$(find transbot_nav)/launch/library/amcl.launch"/>
+        
+        <!-- move_base导航 -->
+        <include file="$(find transbot_nav)/launch/library/move_base.launch"/>
+        
+        <!-- 应用层相关 -->
+        <include file="$(find transbot_nav)/launch/library/app.launch"/>
+        
+        <!-- 标记节点 -->
+        <node name='send_mark' pkg="transbot_nav" type="send_mark.py" output="screen"/>
+        
+        <!-- rviz可视化 -->
+        <group if="$(arg open_rviz)">
+            <include file="$(find transbot_nav)/launch/view/view_navigate.launch"/>
+        </group>
+    </group>
     
+    <!-- ========== 软件控制层 ========== -->
     <!-- 基础控制层 -->
-    <node name="enhanced_motion_controller" pkg="transbot_manager" type="enhanced_motion_controller.py" output="screen">
+    <node name="enhanced_motion_controller" pkg="transbot_manager" type="enhanced_motion_controller.py" 
+          output="screen" respawn="true" respawn_delay="3">
         <param name="cmd_timeout" value="2.0"/>
         <param name="battery_warning_level" value="20.0"/>
         <param name="status_publish_rate" value="5.0"/>
@@ -12,16 +70,19 @@
     </node>
     
     <!-- 系统协调器 -->
-    <node name="system_coordinator" pkg="transbot_manager" type="system_coordinator.py" output="screen"/>
+    <node name="system_coordinator" pkg="transbot_manager" type="system_coordinator.py" 
+          output="screen" respawn="true" respawn_delay="3"/>
     
     <!-- 任务执行层 -->
-    <node name="cloud_task_receiver" pkg="transbot_manager" type="cloud_task_receiver.py" output="screen">
+    <node name="cloud_task_receiver" pkg="transbot_manager" type="cloud_task_receiver.py" 
+          output="screen" respawn="true" respawn_delay="3">
         <param name="task_timeout" value="300.0"/>
         <param name="retry_attempts" value="3"/>
     </node>
     
     <!-- 状态管理器 -->
-    <node name="task_status_manager" pkg="transbot_manager" type="task_status_manager.py" output="screen">
+    <node name="task_status_manager" pkg="transbot_manager" type="task_status_manager.py" 
+          output="screen" respawn="true" respawn_delay="3">
         <param name="cloud_report_interval" value="2.0"/>
     </node>
     
@@ -31,14 +92,10 @@
         <node name="mock_sensors" pkg="transbot_manager" type="mock_sensors.py" output="screen"/>
     </group>
     
-    <!-- 参数 -->
-    <arg name="test_mode" default="false"/>
-    <arg name="debug_mode" default="false"/>
-    
     <!-- 调试模式 -->
     <group if="$(arg debug_mode)">
-        <node name="rqt_console" pkg="rqt_console" type="rqt_console"/>
-        <node name="rqt_graph" pkg="rqt_graph" type="rqt_graph"/>
+        <node name="rqt_console" pkg="rqt_console" type="rqt_console" respawn="false"/>
+        <node name="rqt_graph" pkg="rqt_graph" type="rqt_graph" respawn="false"/>
     </group>
     
 </launch>

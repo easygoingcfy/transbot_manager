@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+#coding=utf-8
+
 import rospy
 import actionlib
 from atomic_behaviors import AtomicBehavior
@@ -26,7 +28,7 @@ class ElevatorControlBehavior(AtomicBehavior):
         :param speed: 移动速度
         :param timeout: 超时时间
         """
-        self.publish_status(f"升降杆移动到位置: {target_position}")
+        self.publish_status("升降杆移动到位置: {}".format(target_position))
         status_manager.update_progress("升降杆启动", 5.0)
         
         # 启用升降杆

@@ -1,11 +1,16 @@
 #!/usr/bin/env python
+#coding=utf-8
 from enum import Enum
 
-class TaskResult(Enum):
-    SUCCESS = "success"
-    FAILURE = "failure" 
-    TIMEOUT = "timeout"
-    CANCELLED = "cancelled"
+
+class TaskResult:
+    """任务执行结果枚举"""
+    SUCCESS = "SUCCESS"
+    FAILURE = "FAILURE"
+    TIMEOUT = "TIMEOUT"
+    CANCELLED = "CANCELLED"
+    RUNNING = "RUNNING"
+    PENDING = "PENDING"
 
 class TaskStatus(Enum):
     IDLE = "idle"
