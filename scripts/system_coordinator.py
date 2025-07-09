@@ -18,7 +18,7 @@ class SystemCoordinator:
         # 订阅任务执行状态
         rospy.Subscriber('/task_execution_status', String, self._task_execution_callback)
         
-        # 订阅控制层状态 - 修复：使用String类型
+        # 订阅控制层状态 
         rospy.Subscriber('/robot_status', String, self._control_status_callback)
         
         # 系统状态

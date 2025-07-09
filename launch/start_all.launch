@@ -97,5 +97,21 @@
         <node name="rqt_console" pkg="rqt_console" type="rqt_console" respawn="false"/>
         <node name="rqt_graph" pkg="rqt_graph" type="rqt_graph" respawn="false"/>
     </group>
+
+    <!-- MQTT桥接器 -->
+    <node name="mqtt_bridge" pkg="transbot_manager" type="mqtt_bridge.py" 
+        output="screen" respawn="true" respawn_delay="5">
+    
+    <!-- 加载YAML配置文件 -->
+    <rosparam file="$(find transbot_manager)/config/mqtt_config.yaml" command="load"/>
+
+    <!-- MQTT连接配置 -->
+    <param name="mqtt_broker" value="localhost"/>
+    <param name="mqtt_port" value="1883"/>
+    <param name="mqtt_username" value=""/>
+    <param name="mqtt_password" value=""/>
+    <param name="mqtt_keepalive" value="60"/>
+
+    </node>
     
 </launch>

@@ -1,0 +1,17 @@
+topics:
+  commands:
+    mode: "robot/{robot_id}/command/mode"
+    velocity: "robot/{robot_id}/command/velocity"
+    navigation: "robot/{robot_id}/command/navigation"
+    elevator: "robot/{robot_id}/command/elevator"
+    camera: "robot/{robot_id}/command/camera"
+    emergency: "robot/{robot_id}/command/emergency"
+    task: "robot/{robot_id}/command/task"
+  
+  reports:
+    status: "robot/{robot_id}/status"
+    feedback: "robot/{robot_id}/feedback"
+    telemetry: "robot/{robot_id}/telemetry"
+    heartbeat: "robot/{robot_id}/heartbeat"
+    task_status: "robot/{robot_id}/task_status"
+    task_feedback: "robot/{robot_id}/task_feedback"

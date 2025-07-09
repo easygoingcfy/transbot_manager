@@ -6,6 +6,10 @@ import rospy
 import threading
 import time
 import json
+import cv2
+from cv_bridge import CvBridge
+import os
+from datetime import datetime
 from robot_enums import ControlMode, SystemStatus
 from std_msgs.msg import String, Header, Bool, Float32
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
@@ -17,6 +21,10 @@ class EnhancedMotionController:
     
     def __init__(self):
         rospy.init_node('enhanced_motion_controller')
+        
+        # 图像处理工具
+        self.bridge = CvBridge()
+        self.capture_lock = threading.Lock()
         
         # 控制状态
         self.control_mode = ControlMode.PAUSE  # auto, manual, pause, stop
@@ -66,7 +74,6 @@ class EnhancedMotionController:
         # 外设控制
         self.elevator_cmd_pub = rospy.Publisher('/elevator/position_cmd', Float32, queue_size=1)
         self.elevator_enable_pub = rospy.Publisher('/elevator/enable', Bool, queue_size=1)
-        self.camera_trigger_pub = rospy.Publisher('/camera/trigger', Bool, queue_size=1)
         
         # 状态上报
         self.robot_status_pub = rospy.Publisher('/robot_status', String, queue_size=1)
@@ -173,8 +180,95 @@ class EnhancedMotionController:
     
     def _remote_camera_callback(self, msg):
         """处理相机拍照指令"""
-        self.camera_trigger_pub.publish(msg)
-        self._publish_control_feedback("相机拍照指令已发送")
+        if msg.data:  # True表示触发拍照
+            try:
+                # 使用线程避免阻塞
+                threading.Thread(
+                    target=self._capture_and_save_image,
+                    name="CameraCapture"
+                ).start()
+                
+                self._publish_control_feedback("拍照指令已接收，正在处理...")
+                
+            except Exception as e:
+                self._publish_control_feedback("拍照失败 - {}".format(str(e)))
+                rospy.logerr("相机拍照错误: {}".format(e))
+        else:
+            self._publish_control_feedback("相机拍照指令已取消")
+
+    def _capture_and_save_image(self):
+        """捕获并保存图像"""
+        with self.capture_lock:
+            try:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_dir = "/tmp/robot_captures"
+                
+                # 确保目录存在
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+                
+                captured_images = {}
+                
+                # 捕获RGB图像
+                try:
+                    rgb_msg = rospy.wait_for_message('/camera/rgb/image_raw', Image, timeout=3.0)
+                    rgb_image = self.bridge.imgmsg_to_cv2(rgb_msg, "bgr8")
+                    rgb_path = os.path.join(save_dir, "rgb_{}.jpg".format(timestamp))
+                    cv2.imwrite(rgb_path, rgb_image)
+                    captured_images['rgb'] = rgb_path
+                    rospy.loginfo("RGB图像已保存: {}".format(rgb_path))
+                except rospy.ROSException:
+                    rospy.logwarn("RGB图像捕获超时")
+                except Exception as e:
+                    rospy.logerr("RGB图像处理错误: {}".format(e))
+                
+                # 捕获深度图像
+                try:
+                    depth_msg = rospy.wait_for_message('/camera/depth/image_raw', Image, timeout=3.0)
+                    depth_image = self.bridge.imgmsg_to_cv2(depth_msg, "16UC1")
+                    # 转换深度图为可视化图像
+                    depth_normalized = cv2.normalize(depth_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                    depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                    depth_path = os.path.join(save_dir, "depth_{}.jpg".format(timestamp))
+                    cv2.imwrite(depth_path, depth_colored)
+                    captured_images['depth'] = depth_path
+                    rospy.loginfo("深度图像已保存: {}".format(depth_path))
+                except rospy.ROSException:
+                    rospy.logwarn("深度图像捕获超时")
+                except Exception as e:
+                    rospy.logerr("深度图像处理错误: {}".format(e))
+                
+                # 捕获红外图像
+                try:
+                    ir_msg = rospy.wait_for_message('/camera/ir/image_raw', Image, timeout=3.0)
+                    ir_image = self.bridge.imgmsg_to_cv2(ir_msg, "mono8")
+                    ir_path = os.path.join(save_dir, "ir_{}.jpg".format(timestamp))
+                    cv2.imwrite(ir_path, ir_image)
+                    captured_images['ir'] = ir_path
+                    rospy.loginfo("红外图像已保存: {}".format(ir_path))
+                except rospy.ROSException:
+                    rospy.logwarn("红外图像捕获超时")
+                except Exception as e:
+                    rospy.logerr("红外图像处理错误: {}".format(e))
+                
+                # 更新机器人状态
+                with self.data_lock:
+                    self.robot_state['camera_image'] = {
+                        'timestamp': rospy.Time.now().to_sec(),
+                        'captured_images': captured_images,
+                        'last_capture': True
+                    }
+                
+                # 发送反馈
+                if captured_images:
+                    feedback_msg = "拍照成功 - 已保存: {}".format(", ".join(captured_images.keys()))
+                    self._publish_control_feedback(feedback_msg)
+                else:
+                    self._publish_control_feedback("拍照失败 - 未能获取任何图像")
+                    
+            except Exception as e:
+                self._publish_control_feedback("拍照处理失败 - {}".format(str(e)))
+                rospy.logerr("图像捕获处理错误: {}".format(e))
     
     def _emergency_stop_callback(self, msg):
         """处理紧急停止指令"""

@@ -6,7 +6,12 @@ import rospy
 import actionlib
 from abc import ABCMeta, abstractmethod
 from robot_enums import TaskResult
-from std_msgs.msg import String
+import cv2
+import numpy as np
+from cv_bridge import CvBridge
+import os
+from datetime import datetime
+from std_msgs.msg import String, Bool
 from geometry_msgs.msg import PoseStamped, Twist
 from move_base_msgs.msg import MoveBaseAction, MoveBaseGoal
 from sensor_msgs.msg import Image
@@ -112,25 +117,105 @@ class RotateBehavior(AtomicBehavior):
 class CaptureImageBehavior(AtomicBehavior):
     def __init__(self):
         super(CaptureImageBehavior, self).__init__("CaptureImage")
+        self.bridge = CvBridge()
         
-    def execute(self, image_topic="/camera/image_raw", save_path=None, **kwargs):
-        """执行图像捕获"""
-        self.publish_status("拍照中")
+    def execute(self, camera_type="rgb", save_path=None, timeout=5.0, **kwargs):
+        """执行图像捕获
+        Args:
+            camera_type: "rgb", "depth", "ir" 选择相机类型
+            save_path: 保存路径，如果为None则自动生成
+            timeout: 等待图像的超时时间
+        """
+        # 根据相机类型选择话题
+        topic_map = {
+            "rgb": "/camera/rgb/image_raw",
+            "depth": "/camera/depth/image_raw", 
+            "ir": "/camera/ir/image_raw"
+        }
+        
+        image_topic = topic_map.get(camera_type, "/camera/rgb/image_raw")
+        
+        self.publish_status("拍照中 - {}".format(camera_type.upper()))
+        
         try:
-            # 尝试等待图像消息
-            image_msg = rospy.wait_for_message(image_topic, Image, timeout=5.0)
-            if save_path:
+            # 直接等待图像消息（无需触发）
+            image_msg = rospy.wait_for_message(image_topic, Image, timeout=timeout)
+            
+            # 转换图像格式
+            if camera_type == "depth":
+                cv_image = self.bridge.imgmsg_to_cv2(image_msg, "16UC1")
+            elif camera_type == "ir":
+                cv_image = self.bridge.imgmsg_to_cv2(image_msg, "mono8")
+            else:  # rgb
+                cv_image = self.bridge.imgmsg_to_cv2(image_msg, "bgr8")
+            
+            # 生成保存路径
+            if not save_path:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_dir = "/tmp/robot_captures"
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
+                save_path = os.path.join(save_dir, "{}_{}.jpg".format(camera_type, timestamp))
+            
+            # 保存图像
+            success = self._save_image(cv_image, save_path, camera_type)
+            if success:
+                self.publish_status("图像已保存: {}".format(save_path))
                 rospy.loginfo("图像已保存到: {}".format(save_path))
-            return TaskResult.SUCCESS
+                return TaskResult.SUCCESS
+            else:
+                rospy.logwarn("图像保存失败: {}".format(save_path))
+                return TaskResult.FAILURE
+            
         except rospy.ROSException:
-            rospy.logwarn("图像捕获超时")
+            self.publish_status("拍照超时")
+            rospy.logwarn("图像捕获超时 - 话题: {}".format(image_topic))
             return TaskResult.TIMEOUT
         except Exception as e:
+            self.publish_status("拍照失败")
             rospy.logerr("图像捕获错误: {}".format(e))
             return TaskResult.FAILURE
     
+    def _save_image(self, cv_image, save_path, camera_type):
+        """保存图像到指定路径"""
+        try:
+            # 确保目录存在
+            directory = os.path.dirname(save_path)
+            if directory and not os.path.exists(directory):
+                os.makedirs(directory)
+            
+            # 根据相机类型进行不同处理
+            if camera_type == "depth":
+                # 深度图像需要特殊处理
+                depth_normalized = cv2.normalize(cv_image, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+                depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
+                return cv2.imwrite(save_path, depth_colored)
+            else:
+                # RGB和红外图像直接保存
+                return cv2.imwrite(save_path, cv_image)
+                
+        except Exception as e:
+            rospy.logerr("保存图像失败: {}".format(e))
+            return False
+    
+    def capture_all_cameras(self, base_path="/tmp/robot_captures", timeout=5.0):
+        """捕获所有相机的图像"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results = {}
+        
+        for camera_type in ["rgb", "depth", "ir"]:
+            save_path = os.path.join(base_path, "{}_{}.jpg".format(camera_type, timestamp))
+            result = self.execute(camera_type=camera_type, save_path=save_path, timeout=timeout)
+            results[camera_type] = {
+                'result': result,
+                'path': save_path if result == TaskResult.SUCCESS else None
+            }
+        
+        return results
+    
     def cancel(self):
         self._cancelled = True
+
 
 class SpeakBehavior(AtomicBehavior):
     def __init__(self):
