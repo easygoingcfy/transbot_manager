@@ -23,6 +23,9 @@ class RobotController(QObject):
         super().__init__()
         self.config = config
         self.logger = Logger.get_logger(__name__)
+
+        # 添加调试标志
+        self.debug_mode = True
         
         # 创建MQTT客户端
         self.mqtt_client = MQTTClient(config)

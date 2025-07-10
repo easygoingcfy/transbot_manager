@@ -297,6 +297,7 @@ class MQTTClient(QObject):
     def send_task_command(self, task_data):
         """发送任务命令"""
         topic = self.get_topic('commands', 'task')
+        print("发送任务命令: {}".format(task_data))   
         # 确保task_data包含时间戳
         if isinstance(task_data, dict):
             task_data["timestamp"] = time.time()
@@ -412,12 +413,12 @@ class MQTTClient(QObject):
             self.start_reconnect()
     
     def on_message(self, client, userdata, msg):
-        """消息接收回调 - 重点修复"""
+        """消息接收回调 """
         try:
             topic = msg.topic
             payload = msg.payload.decode('utf-8')
             
-            self.logger.info("收到MQTT消息: {} - {}".format(topic, payload[:100]))
+            # self.logger.info("收到MQTT消息: {} - {}".format(topic, payload[:100]))
             
             # 解析JSON数据
             try:
@@ -452,7 +453,7 @@ class MQTTClient(QObject):
             self.error_occurred.emit("消息处理失败: {}".format(e))
     
     def _handle_response_message(self, topic, data):
-        """处理响应消息 - 重点修复"""
+        """处理响应消息 """
         try:
             request_id = data.get('request_id')
             

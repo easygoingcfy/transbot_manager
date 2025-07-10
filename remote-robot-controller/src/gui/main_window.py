@@ -226,7 +226,7 @@ class MainWindow(QMainWindow):
         self.robot_controller.status_updated.connect(self.status_panel.update_status)
         self.robot_controller.connection_changed.connect(self.on_connection_changed)
         self.robot_controller.connection_changed.connect(self.control_panel.set_connection_status)
-        self.robot_controller.image_received.connect(self.camera_panel.display_image)
+        self.robot_controller.image_data_received.connect(self.handle_image_data)
         self.robot_controller.error_occurred.connect(self.show_error)
         
         # 控制面板信号
@@ -237,10 +237,137 @@ class MainWindow(QMainWindow):
         self.control_panel.emergency_stop_requested.connect(self.robot_controller.emergency_stop)
         
         # 相机面板信号
-        self.camera_panel.capture_requested.connect(self.robot_controller.send_camera)
+        self.camera_panel.capture_requested.connect(self.handle_capture_request)
+        self.camera_panel.stream_toggle.connect(self.handle_stream_toggle)
         
         # 任务面板信号
         self.task_panel.task_created.connect(self.robot_controller.send_task)
+    
+    def request_camera_image(self):
+        """请求相机图像"""
+        quality = self.camera_panel.get_image_quality()
+        print(f"[MAIN_WINDOW] 请求图像，质量: {quality}%")
+        self.robot_controller.request_robot_image(quality)
+    
+    def handle_capture_request(self):
+        """处理拍照请求 - 同时发送拍照命令和图像请求"""
+        try:
+            print("[MAIN_WINDOW] 处理拍照请求")
+            
+            # 1. 发送拍照命令到机器人
+            camera_success = self.robot_controller.send_camera(True)
+            print(f"[MAIN_WINDOW] 发送拍照命令: {camera_success}")
+            
+            # 2. 稍等片刻让机器人拍照，然后请求图像
+            def request_image_after_capture():
+                import time
+                time.sleep(0.5)  # 等待500ms让机器人完成拍照
+                
+                quality = self.camera_panel.get_image_quality()
+                print(f"[MAIN_WINDOW] 请求图像，质量: {quality}%")
+                
+                image_success = self.robot_controller.request_robot_image(quality)
+                print(f"[MAIN_WINDOW] 发送图像请求: {image_success}")
+            
+            # 在后台线程中执行延迟请求
+            import threading
+            threading.Thread(target=request_image_after_capture, daemon=True).start()
+            
+            # 更新状态栏
+            self.status_bar.showMessage("正在拍照...", 2000)
+            
+        except Exception as e:
+            print(f"[MAIN_WINDOW] 拍照请求处理失败: {e}")
+            self.show_error(f"拍照失败: {e}")
+
+    def handle_stream_toggle(self, enabled):
+        """处理视频流切换"""
+        try:
+            print(f"[MAIN_WINDOW] 视频流切换: {enabled}")
+            
+            if enabled:
+                # 启动定时器定期请求图像
+                if not hasattr(self, 'stream_timer'):
+                    from PyQt5.QtCore import QTimer
+                    self.stream_timer = QTimer()
+                    self.stream_timer.timeout.connect(self.request_stream_image)
+                
+                # 根据配置设置更新频率
+                update_rate = self.config.get('ui', {}).get('image_update_rate', 5)  # Hz
+                interval = int(1000 / update_rate)  # 转换为毫秒
+                
+                self.stream_timer.start(interval)
+                print(f"[MAIN_WINDOW] 启动视频流，更新频率: {update_rate}Hz")
+                self.status_bar.showMessage(f"视频流已启动 ({update_rate}Hz)")
+            else:
+                # 停止定时器
+                if hasattr(self, 'stream_timer'):
+                    self.stream_timer.stop()
+                print("[MAIN_WINDOW] 停止视频流")
+                self.status_bar.showMessage("视频流已停止")
+                
+        except Exception as e:
+            print(f"[MAIN_WINDOW] 视频流切换失败: {e}")
+            self.show_error(f"视频流切换失败: {e}")
+
+    def request_stream_image(self):
+        """请求流媒体图像"""
+        try:
+            # 使用较低的图像质量以提高传输速度
+            stream_quality = max(30, self.camera_panel.get_image_quality() - 30)
+            self.robot_controller.request_robot_image(stream_quality)
+        except Exception as e:
+            print(f"[MAIN_WINDOW] 流媒体图像请求失败: {e}")
+
+    def handle_image_data(self, image_data):
+        """处理图像数据"""
+        try:
+            print(f"[MAIN_WINDOW] 收到图像数据: {len(image_data.get('image_data', ''))//1024}KB")
+            
+            # 从base64数据创建QImage
+            qimage = self.convert_base64_to_qimage(image_data)
+            
+            if qimage:
+                # 显示图像
+                self.camera_panel.display_image(qimage)
+                print("[MAIN_WINDOW] 图像已显示到相机面板")
+            else:
+                print("[MAIN_WINDOW] 图像转换失败")
+                
+        except Exception as e:
+            print(f"[MAIN_WINDOW] 处理图像数据失败: {e}")
+            self.show_error(f"图像处理失败: {e}")
+    
+    def convert_base64_to_qimage(self, image_data):
+        """将base64图像数据转换为QImage"""
+        try:
+            import base64
+            from PyQt5.QtGui import QImage
+            
+            # 获取base64图像数据
+            image_base64 = image_data.get('image_data', '')
+            
+            if not image_base64:
+                print("[MAIN_WINDOW] 没有图像数据")
+                return None
+            
+            # 解码base64
+            image_bytes = base64.b64decode(image_base64)
+            
+            # 创建QImage
+            qimage = QImage()
+            success = qimage.loadFromData(image_bytes)
+            
+            if success:
+                print(f"[MAIN_WINDOW] 图像转换成功: {qimage.width()}x{qimage.height()}")
+                return qimage
+            else:
+                print("[MAIN_WINDOW] QImage.loadFromData 失败")
+                return None
+                
+        except Exception as e:
+            print(f"[MAIN_WINDOW] 图像转换异常: {e}")
+            return None
     
     def toggle_connection(self):
         """切换连接状态"""

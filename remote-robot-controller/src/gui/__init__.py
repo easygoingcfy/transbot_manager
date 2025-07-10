@@ -1,34 +1,21 @@
 """GUI模块"""
 
-# 使用 try-except 来处理可能的导入错误
-try:
-    from .main_window import MainWindow
-except ImportError:
-    MainWindow = None
+from .main_window import MainWindow
+from .control_panel import ControlPanel
+from .status_panel import StatusPanel
+from .camera_panel import CameraPanel
+from .task_panel import TaskPanel
+from .settings_dialog import SettingsDialog
+from .task_creator_dialog import TaskCreatorDialog
+from .json_editor_dialog import JsonEditorDialog
 
-try:
-    from .control_panel import ControlPanel
-except ImportError:
-    ControlPanel = None
-
-try:
-    from .status_panel import StatusPanel
-except ImportError:
-    StatusPanel = None
-
-try:
-    from .camera_panel import CameraPanel
-except ImportError:
-    CameraPanel = None
-
-try:
-    from .task_panel import TaskPanel
-except ImportError:
-    TaskPanel = None
-
-try:
-    from .settings_dialog import SettingsDialog
-except ImportError:
-    SettingsDialog = None
-
-__all__ = ['MainWindow', 'ControlPanel', 'StatusPanel', 'CameraPanel', 'TaskPanel', 'SettingsDialog']
+__all__ = [
+    'MainWindow',
+    'ControlPanel', 
+    'StatusPanel',
+    'CameraPanel',
+    'TaskPanel',
+    'SettingsDialog',
+    'TaskCreatorDialog',
+    'JsonEditorDialog'
+]
