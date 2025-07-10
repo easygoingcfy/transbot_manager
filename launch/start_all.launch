@@ -4,7 +4,7 @@
     <arg name="debug_mode" default="false"/>
     <arg name="log_level" default="info"/>
     <arg name="with_hardware" default="true"/>
-    <arg name="with_navigation" default="false"/>  <!-- 是否启动导航 -->
+    <arg name="with_navigation" default="true"/>  <!-- 是否启动导航 -->
     <arg name="map_name" default="house"/>         <!-- 地图名称 -->
     <arg name="open_rviz" default="false"/>       <!-- 是否打开rviz -->
 
@@ -101,16 +101,17 @@
     <!-- MQTT桥接器 -->
     <node name="mqtt_bridge" pkg="transbot_manager" type="mqtt_bridge.py" 
         output="screen" respawn="true" respawn_delay="5">
-    
-    <!-- 加载YAML配置文件 -->
-    <rosparam file="$(find transbot_manager)/config/mqtt_config.yaml" command="load"/>
 
-    <!-- MQTT连接配置 -->
-    <param name="mqtt_broker" value="localhost"/>
-    <param name="mqtt_port" value="1883"/>
-    <param name="mqtt_username" value=""/>
-    <param name="mqtt_password" value=""/>
-    <param name="mqtt_keepalive" value="60"/>
+        <!-- MQTT连接配置 -->
+        <param name="mqtt_broker" value="localhost"/>
+        <param name="mqtt_port" value="1883"/>
+        <param name="mqtt_username" value=""/>
+        <param name="mqtt_password" value=""/>
+        <param name="mqtt_keepalive" value="60"/>
+    
+        <!-- 加载YAML配置文件 -->
+        <rosparam file="$(find transbot_manager)/config/mqtt_config.yaml" command="load"/>
+
 
     </node>
     

@@ -71,12 +71,16 @@ class MQTTBridge:
         # 机器人ID
         self.robot_id = rospy.get_param('robot_id', 'transbot_001')
         
-        # 从YAML配置文件加载主题配置（如果存在）
+        # 从参数服务器加载主题配置
         try:
-            self.topic_config = rospy.get_param('~topics', {})
-            rospy.loginfo("已加载主题配置: {}".format(self.topic_config))
-        except:
-            # 如果没有YAML配置，使用默认配置
+            self.topic_config = rospy.get_param('~topics', None)
+            if self.topic_config:
+                rospy.loginfo("已加载主题配置，包含 {} 个分类".format(len(self.topic_config)))
+            else:
+                raise Exception("主题配置为空")
+        except Exception as e:
+            rospy.logwarn("加载主题配置失败: {}，使用默认配置".format(e))
+            # 使用默认配置
             self.topic_config = {
                 'commands': {
                     'mode': 'robot/{robot_id}/command/mode',
@@ -94,6 +98,23 @@ class MQTTBridge:
                     'heartbeat': 'robot/{robot_id}/heartbeat',
                     'task_status': 'robot/{robot_id}/task_status',
                     'task_feedback': 'robot/{robot_id}/task_feedback'
+                },
+                'requests': {
+                    'status': 'robot/{robot_id}/request/status',
+                    'image': 'robot/{robot_id}/request/image',
+                    'mode': 'robot/{robot_id}/request/mode',
+                    'connection_test': 'robot/{robot_id}/request/connection_test'
+                },
+                'responses': {
+                    'status': 'robot/{robot_id}/response/status',
+                    'image': 'robot/{robot_id}/response/image',
+                    'mode': 'robot/{robot_id}/response/mode',
+                    'connection_test': 'robot/{robot_id}/response/connection_test'
+                },
+                'system': {
+                    'broadcast': 'system/broadcast',
+                    'ping': 'robot/{robot_id}/ping',
+                    'pong': 'robot/{robot_id}/pong'
                 }
             }
             rospy.loginfo("使用默认主题配置")
@@ -191,16 +212,16 @@ class MQTTBridge:
 
             # 订阅请求主题
             request_topics = [
-                (f"robot/{self.robot_id}/request/status", 0),
-                (f"robot/{self.robot_id}/request/image", 0),
-                (f"robot/{self.robot_id}/request/mode", 0),
-                (f"robot/{self.robot_id}/request/connection_test", 0),
+                (self._get_topic('requests', 'status'), 0),
+                (self._get_topic('requests', 'image'), 0),
+                (self._get_topic('requests', 'mode'), 0),
+                (self._get_topic('requests', 'connection_test'), 0),
             ]
 
             # 订阅系统主题
             system_topics = [
-                ("system/broadcast", 0),
-                (f"robot/{self.robot_id}/ping", 0),
+                (self._get_topic('system', 'broadcast'), 0),
+                (self._get_topic('system', 'ping'), 0),
             ]
 
             all_topics = command_topics + request_topics + system_topics
@@ -230,7 +251,8 @@ class MQTTBridge:
             topic = msg.topic
             payload = msg.payload.decode('utf-8')
             
-            rospy.loginfo("收到MQTT消息: {} - {}".format(topic, payload))
+            if not topic.endswith('/command/velocity'):
+                rospy.loginfo("收到MQTT消息: {} - {}".format(topic, payload))
             
             # 解析消息
             if topic.endswith('/command/mode'):
@@ -295,8 +317,8 @@ class MQTTBridge:
             
             self.cmd_vel_pub.publish(twist)
             
-            rospy.loginfo("速度控制指令: linear_x={}, angular_z={}".format(
-                twist.linear.x, twist.angular.z))
+            # rospy.loginfo("速度控制指令: linear_x={}, angular_z={}".format(
+            #     twist.linear.x, twist.angular.z))
             
         except json.JSONDecodeError:
             rospy.logerr("速度指令格式错误: {}".format(payload))
@@ -451,10 +473,12 @@ class MQTTBridge:
                             "error": "Failed to capture image",
                             "image_data": None
                         }
-                        topic = f"robot/{self.robot_id}/response/image"
+                        topic = self._get_topic('responses', 'image')
                         self._publish_to_cloud(topic, json.dumps(error_response))
                 
-                threading.Thread(target=delayed_response, daemon=True).start()
+                thread = threading.Thread(target=delayed_response)
+                thread.daemon = True
+                thread.start()
             
         except json.JSONDecodeError:
             rospy.logerr("图像请求格式错误: {}".format(payload))
@@ -472,7 +496,7 @@ class MQTTBridge:
                 "current_mode": self.robot_status_cache.get("mode", "pause")
             }
             
-            topic = f"robot/{self.robot_id}/response/mode"
+            topic = self._get_topic('responses', 'mode')
             self._publish_to_cloud(topic, json.dumps(response))
             
         except json.JSONDecodeError:
@@ -492,7 +516,7 @@ class MQTTBridge:
                 "latency_ms": (time.time() - data.get('timestamp', time.time())) * 1000
             }
             
-            topic = f"robot/{self.robot_id}/response/connection_test"
+            topic = self._get_topic('responses', 'connection_test')
             self._publish_to_cloud(topic, json.dumps(response))
             
         except json.JSONDecodeError:
@@ -511,7 +535,7 @@ class MQTTBridge:
                 "pong": True
             }
             
-            topic = f"robot/{self.robot_id}/pong"
+            topic = self._get_topic('system', 'pong')
             self._publish_to_cloud(topic, json.dumps(response))
             
         except json.JSONDecodeError:
@@ -559,7 +583,7 @@ class MQTTBridge:
                 "image_data": image_base64
             }
             
-            topic = f"robot/{self.robot_id}/response/image"
+            topic = self._get_topic('responses', 'image')
             self._publish_to_cloud(topic, json.dumps(response))
             
             rospy.loginfo("图像响应已发送: {}x{}, 质量={}, 大小={}KB".format(
@@ -659,7 +683,7 @@ class MQTTBridge:
     def _send_periodic_image(self):
         """发送周期性图像"""
         if self.latest_image is not None:
-            request_id = f"periodic_{int(time.time())}"
+            request_id = "periodic_{}".format(int(time.time()))
             self._send_image_response(self.latest_image, request_id, quality=60)
     
     def _publish_robot_status(self):

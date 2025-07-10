@@ -41,7 +41,7 @@ network:
   reconnect_interval: 5
   auto_reconnect: true
 
-# 主题映射
+# 完整的主题映射 - 与机器人端保持一致
 topic_mapping:
   commands:
     mode: "robot/{robot_id}/command/mode"
@@ -51,6 +51,7 @@ topic_mapping:
     camera: "robot/{robot_id}/command/camera"
     emergency: "robot/{robot_id}/command/emergency"
     task: "robot/{robot_id}/command/task"
+  
   reports:
     status: "robot/{robot_id}/status"
     feedback: "robot/{robot_id}/feedback"
@@ -58,3 +59,23 @@ topic_mapping:
     heartbeat: "robot/{robot_id}/heartbeat"
     task_status: "robot/{robot_id}/task_status"
     task_feedback: "robot/{robot_id}/task_feedback"
+  
+  # 新增请求主题配置
+  requests:
+    status: "robot/{robot_id}/request/status"
+    image: "robot/{robot_id}/request/image"
+    mode: "robot/{robot_id}/request/mode"
+    connection_test: "robot/{robot_id}/request/connection_test"
+  
+  # 新增响应主题配置
+  responses:
+    status: "robot/{robot_id}/response/status"
+    image: "robot/{robot_id}/response/image"
+    mode: "robot/{robot_id}/response/mode"
+    connection_test: "robot/{robot_id}/response/connection_test"
+  
+  # 新增系统主题配置
+  system:
+    broadcast: "system/broadcast"
+    ping: "robot/{robot_id}/ping"
+    pong: "robot/{robot_id}/pong"

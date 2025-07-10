@@ -4,10 +4,19 @@
 import time
 import threading
 import json
+import sys
 import paho.mqtt.client as mqtt
 from PyQt5.QtCore import QObject, pyqtSignal
 
 from .logger import Logger
+
+# Python 2/3 兼容性处理
+if sys.version_info[0] == 2:
+    def format_string(template, **kwargs):
+        return template.format(**kwargs)
+else:
+    def format_string(template, **kwargs):
+        return template.format(**kwargs)
 
 class MQTTClient(QObject):
     """MQTT客户端 - 负责MQTT通信"""
@@ -19,8 +28,13 @@ class MQTTClient(QObject):
     connection_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
     
+    # 新增响应信号
+    mode_response_received = pyqtSignal(dict)
+    connection_test_response_received = pyqtSignal(dict)
+    pong_received = pyqtSignal(dict)
+    
     def __init__(self, config):
-        super().__init__()
+        super(MQTTClient, self).__init__()
         self.config = config
         self.logger = Logger.get_logger(__name__)
         
@@ -40,6 +54,9 @@ class MQTTClient(QObject):
         robot_config = config.get('robot', {})
         self.robot_id = robot_config.get('id', 'transbot_001')
         
+        # 主题映射配置
+        self.topic_mapping = config.get('topic_mapping', {})
+        
         # SSL配置
         ssl_config = mqtt_config.get('ssl', {})
         self.ssl_enabled = ssl_config.get('enabled', False)
@@ -49,8 +66,9 @@ class MQTTClient(QObject):
         self.connected = False
         self.connecting = False
         
-        # 创建MQTT客户端
-        self.client = mqtt.Client(client_id=f"robot_controller_{int(time.time())}")
+        # 创建MQTT客户端 - Python 2兼容
+        client_id = "robot_controller_{}".format(int(time.time()))
+        self.client = mqtt.Client(client_id=client_id)
         self.setup_client()
         
         # 重连参数
@@ -66,7 +84,16 @@ class MQTTClient(QObject):
         # 订阅的主题列表
         self.subscribed_topics = []
         
-        self.logger.info(f"MQTT客户端初始化完成 - 服务器: {self.host}:{self.port}")
+        self.logger.info("MQTT客户端初始化完成 - 服务器: {}:{}".format(self.host, self.port))
+    
+    def get_topic(self, category, topic_name):
+        """获取格式化的主题名称"""
+        try:
+            template = self.topic_mapping[category][topic_name]
+            return template.format(robot_id=self.robot_id)
+        except KeyError:
+            # 如果配置不存在，使用默认格式
+            return "robot/{}/{}".format(self.robot_id, topic_name)
     
     def setup_client(self):
         """设置MQTT客户端"""
@@ -92,8 +119,8 @@ class MQTTClient(QObject):
                     self.client.tls_set()
                 self.logger.info("已启用SSL/TLS")
             except Exception as e:
-                self.logger.error(f"SSL配置失败: {e}")
-                self.error_occurred.emit(f"SSL配置失败: {e}")
+                self.logger.error("SSL配置失败: {}".format(e))
+                self.error_occurred.emit("SSL配置失败: {}".format(e))
     
     def connect(self):
         """连接到MQTT服务器"""
@@ -102,7 +129,7 @@ class MQTTClient(QObject):
         
         try:
             self.connecting = True
-            self.logger.info(f"正在连接到MQTT服务器: {self.host}:{self.port}")
+            self.logger.info("正在连接到MQTT服务器: {}:{}".format(self.host, self.port))
             
             # 设置连接超时
             self.client.connect_async(self.host, self.port, self.keepalive)
@@ -110,8 +137,8 @@ class MQTTClient(QObject):
             
         except Exception as e:
             self.connecting = False
-            self.logger.error(f"MQTT连接失败: {e}")
-            self.error_occurred.emit(f"连接失败: {e}")
+            self.logger.error("MQTT连接失败: {}".format(e))
+            self.error_occurred.emit("连接失败: {}".format(e))
     
     def disconnect(self):
         """断开MQTT连接"""
@@ -127,7 +154,59 @@ class MQTTClient(QObject):
             self.logger.info("已断开MQTT连接")
             
         except Exception as e:
-            self.logger.error(f"断开连接失败: {e}")
+            self.logger.error("断开连接失败: {}".format(e))
+    
+    def subscribe_robot_topics(self):
+        """订阅机器人相关的所有主题"""
+        # 报告主题
+        report_topics = [
+            self.get_topic('reports', 'status'),
+            self.get_topic('reports', 'feedback'),
+            self.get_topic('reports', 'telemetry'),
+            self.get_topic('reports', 'heartbeat'),
+            self.get_topic('reports', 'task_status'),
+            self.get_topic('reports', 'task_feedback'),
+        ]
+        
+        # 响应主题 - 重点修复
+        response_topics = [
+            self.get_topic('responses', 'status'),
+            self.get_topic('responses', 'image'),
+            self.get_topic('responses', 'mode'),
+            self.get_topic('responses', 'connection_test'),
+        ]
+        
+        # 系统主题
+        system_topics = [
+            self.get_topic('system', 'pong'),
+            self.get_topic('system', 'broadcast'),
+        ]
+        
+        all_topics = report_topics + response_topics + system_topics
+        
+        for topic in all_topics:
+            self.subscribe(topic)
+            self.logger.info("订阅主题: {}".format(topic))
+    
+    def subscribe(self, topic, qos=0):
+        """订阅主题"""
+        if not self.connected:
+            self.logger.warning("MQTT未连接，无法订阅主题")
+            return False
+        
+        try:
+            result, mid = self.client.subscribe(topic, qos)
+            if result == mqtt.MQTT_ERR_SUCCESS:
+                self.logger.debug("订阅主题成功: {}".format(topic))
+                if topic not in self.subscribed_topics:
+                    self.subscribed_topics.append(topic)
+                return True
+            else:
+                self.logger.error("订阅主题失败: {}, 错误码: {}".format(topic, result))
+                return False
+        except Exception as e:
+            self.logger.error("订阅主题异常: {}".format(e))
+            return False
     
     def publish(self, topic, payload, qos=0, retain=False):
         """发布消息"""
@@ -142,84 +221,20 @@ class MQTTClient(QObject):
             
             result = self.client.publish(topic, payload, qos, retain)
             if result.rc == mqtt.MQTT_ERR_SUCCESS:
-                self.logger.debug(f"发布消息成功: {topic}")
+                self.logger.debug("发布消息成功: {}".format(topic))
                 return True
             else:
-                self.logger.error(f"发布消息失败: {topic}, 错误码: {result.rc}")
+                self.logger.error("发布消息失败: {}, 错误码: {}".format(topic, result.rc))
                 return False
         except Exception as e:
-            self.logger.error(f"发布消息异常: {e}")
+            self.logger.error("发布消息异常: {}".format(e))
             return False
-    
-    def subscribe(self, topic, qos=0):
-        """订阅主题"""
-        if not self.connected:
-            self.logger.warning("MQTT未连接，无法订阅主题")
-            return False
-        
-        try:
-            result, mid = self.client.subscribe(topic, qos)
-            if result == mqtt.MQTT_ERR_SUCCESS:
-                self.logger.debug(f"订阅主题成功: {topic}")
-                if topic not in self.subscribed_topics:
-                    self.subscribed_topics.append(topic)
-                return True
-            else:
-                self.logger.error(f"订阅主题失败: {topic}, 错误码: {result}")
-                return False
-        except Exception as e:
-            self.logger.error(f"订阅主题异常: {e}")
-            return False
-    
-    def unsubscribe(self, topic):
-        """取消订阅主题"""
-        if not self.connected:
-            return False
-        
-        try:
-            result, mid = self.client.unsubscribe(topic)
-            if result == mqtt.MQTT_ERR_SUCCESS:
-                self.logger.debug(f"取消订阅成功: {topic}")
-                if topic in self.subscribed_topics:
-                    self.subscribed_topics.remove(topic)
-                return True
-            else:
-                self.logger.error(f"取消订阅失败: {topic}, 错误码: {result}")
-                return False
-        except Exception as e:
-            self.logger.error(f"取消订阅异常: {e}")
-            return False
-    
-    def subscribe_robot_topics(self):
-        """订阅机器人相关的所有主题"""
-        topics = [
-            # 状态和反馈主题
-            f"robot/{self.robot_id}/status",
-            f"robot/{self.robot_id}/feedback",
-            f"robot/{self.robot_id}/telemetry",
-            f"robot/{self.robot_id}/heartbeat",
-            f"robot/{self.robot_id}/task_status",
-            f"robot/{self.robot_id}/task_feedback",
-            
-            # 响应主题 - 新增
-            f"robot/{self.robot_id}/response/status",
-            f"robot/{self.robot_id}/response/image",
-            f"robot/{self.robot_id}/response/mode",
-            f"robot/{self.robot_id}/response/connection_test",
-            f"robot/{self.robot_id}/pong",
-            
-            # 系统主题
-            "system/broadcast"
-        ]
-        
-        for topic in topics:
-            self.subscribe(topic)
     
     # ================== 机器人控制命令发送方法 ==================
     
     def send_mode_command(self, mode):
         """发送模式切换命令"""
-        topic = f"robot/{self.robot_id}/command/mode"
+        topic = self.get_topic('commands', 'mode')
         payload = {
             "mode": mode,
             "timestamp": time.time()
@@ -228,7 +243,7 @@ class MQTTClient(QObject):
     
     def send_velocity_command(self, linear_x, linear_y=0.0, angular_z=0.0):
         """发送速度控制命令"""
-        topic = f"robot/{self.robot_id}/command/velocity"
+        topic = self.get_topic('commands', 'velocity')
         payload = {
             "linear_x": linear_x,
             "linear_y": linear_y,
@@ -239,7 +254,7 @@ class MQTTClient(QObject):
     
     def send_navigation_command(self, x, y, z=0.0, qx=0.0, qy=0.0, qz=0.0, qw=1.0):
         """发送导航命令"""
-        topic = f"robot/{self.robot_id}/command/navigation"
+        topic = self.get_topic('commands', 'navigation')
         payload = {
             "x": x,
             "y": y,
@@ -254,7 +269,7 @@ class MQTTClient(QObject):
     
     def send_elevator_command(self, position):
         """发送升降杆命令"""
-        topic = f"robot/{self.robot_id}/command/elevator"
+        topic = self.get_topic('commands', 'elevator')
         payload = {
             "position": position,
             "timestamp": time.time()
@@ -263,7 +278,7 @@ class MQTTClient(QObject):
     
     def send_camera_command(self, capture=True):
         """发送相机命令"""
-        topic = f"robot/{self.robot_id}/command/camera"
+        topic = self.get_topic('commands', 'camera')
         payload = {
             "capture": capture,
             "timestamp": time.time()
@@ -272,7 +287,7 @@ class MQTTClient(QObject):
     
     def send_emergency_stop(self, emergency=True):
         """发送紧急停止命令"""
-        topic = f"robot/{self.robot_id}/command/emergency"
+        topic = self.get_topic('commands', 'emergency')
         payload = {
             "emergency": emergency,
             "timestamp": time.time()
@@ -281,19 +296,84 @@ class MQTTClient(QObject):
     
     def send_task_command(self, task_data):
         """发送任务命令"""
-        topic = f"robot/{self.robot_id}/command/task"
+        topic = self.get_topic('commands', 'task')
         # 确保task_data包含时间戳
         if isinstance(task_data, dict):
             task_data["timestamp"] = time.time()
         return self.publish(topic, task_data)
     
-    def request_image(self):
-        """请求机器人图像"""
-        topic = f"robot/{self.robot_id}/request/image"
+    # ================== 新增请求方法 ==================
+    
+    def request_robot_status(self, status_type='full', callback=None):
+        """请求机器人状态"""
+        request_id = "status_{}".format(int(time.time() * 1000))
+        topic = self.get_topic('requests', 'status')
         payload = {
-            "request_type": "image",
+            "type": status_type,
+            "request_id": request_id,
             "timestamp": time.time()
         }
+        
+        # 记录请求
+        if callback:
+            self.pending_requests[request_id] = {
+                "callback": callback,
+                "timestamp": time.time(),
+                "type": "status"
+            }
+        
+        self.logger.info("发送状态请求: {}".format(request_id))
+        return self.publish(topic, payload)
+    
+    def request_robot_image(self, image_type='rgb', quality=80, callback=None):
+        """请求机器人图像"""
+        request_id = "image_{}".format(int(time.time() * 1000))
+        topic = self.get_topic('requests', 'image')
+        payload = {
+            "type": image_type,
+            "quality": quality,
+            "request_id": request_id,
+            "timestamp": time.time()
+        }
+        
+        # 记录请求
+        if callback:
+            self.pending_requests[request_id] = {
+                "callback": callback,
+                "timestamp": time.time(),
+                "type": "image"
+            }
+        
+        self.logger.info("发送图像请求: {}".format(request_id))
+        return self.publish(topic, payload)
+    
+    def test_connection(self, callback=None):
+        """测试连接"""
+        request_id = "test_{}".format(int(time.time() * 1000))
+        topic = self.get_topic('requests', 'connection_test')
+        payload = {
+            "request_id": request_id,
+            "timestamp": time.time()
+        }
+        
+        # 记录请求
+        if callback:
+            self.pending_requests[request_id] = {
+                "callback": callback,
+                "timestamp": time.time(),
+                "type": "connection_test"
+            }
+        
+        self.logger.info("发送连接测试: {}".format(request_id))
+        return self.publish(topic, payload)
+    
+    def ping_robot(self):
+        """Ping机器人"""
+        topic = self.get_topic('system', 'ping')
+        payload = {
+            "timestamp": time.time()
+        }
+        self.logger.info("发送ping到机器人")
         return self.publish(topic, payload)
     
     # ================== MQTT回调函数 ==================
@@ -312,7 +392,7 @@ class MQTTClient(QObject):
             
         else:
             self.connected = False
-            error_msg = f"MQTT连接失败，错误代码: {rc}"
+            error_msg = "MQTT连接失败，错误代码: {}".format(rc)
             self.logger.error(error_msg)
             self.error_occurred.emit(error_msg)
             self.connection_changed.emit(False)
@@ -324,7 +404,7 @@ class MQTTClient(QObject):
     def on_disconnect(self, client, userdata, rc):
         """断开连接回调"""
         self.connected = False
-        self.logger.warning(f"MQTT连接断开，错误代码: {rc}")
+        self.logger.warning("MQTT连接断开，错误代码: {}".format(rc))
         self.connection_changed.emit(False)
         
         # 启动自动重连
@@ -332,134 +412,101 @@ class MQTTClient(QObject):
             self.start_reconnect()
     
     def on_message(self, client, userdata, msg):
-        """消息接收回调"""
+        """消息接收回调 - 重点修复"""
         try:
             topic = msg.topic
             payload = msg.payload.decode('utf-8')
             
-            self.logger.debug(f"收到MQTT消息: {topic}")
+            self.logger.info("收到MQTT消息: {} - {}".format(topic, payload[:100]))
+            
+            # 解析JSON数据
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                self.logger.error("JSON解析失败: {}".format(payload))
+                return
             
             # 处理响应消息
-            if '/response/' in topic or topic.endswith('/pong'):
-                self._handle_response_message(topic, payload)
+            if '/response/' in topic:
+                self._handle_response_message(topic, data)
+            elif topic.endswith('/pong'):
+                self._handle_pong_message(topic, data)
+            elif '/status' in topic:
+                self.status_received.emit(data)
+            elif '/feedback' in topic:
+                self.message_received.emit(topic, payload)
+            elif '/telemetry' in topic:
+                self.message_received.emit(topic, payload)
+            elif '/heartbeat' in topic:
+                self.message_received.emit(topic, payload)
+            elif '/task_status' in topic:
+                self.message_received.emit(topic, payload)
+            elif '/task_feedback' in topic:
+                self.message_received.emit(topic, payload)
             else:
-                # 发射信号给GUI
+                # 其他消息
                 self.message_received.emit(topic, payload)
             
         except Exception as e:
-            self.logger.error(f"处理MQTT消息失败: {e}")
-            self.error_occurred.emit(f"消息处理失败: {e}")
+            self.logger.error("处理MQTT消息失败: {}".format(e))
+            self.error_occurred.emit("消息处理失败: {}".format(e))
     
-    def _handle_response_message(self, topic, payload):
-        """处理响应消息"""
+    def _handle_response_message(self, topic, data):
+        """处理响应消息 - 重点修复"""
         try:
-            data = json.loads(payload)
             request_id = data.get('request_id')
             
+            # 处理待处理请求
             if request_id and request_id in self.pending_requests:
-                # 移除待处理请求
                 request_info = self.pending_requests.pop(request_id)
                 callback = request_info.get('callback')
                 
                 if callback:
                     callback(data)
+                
+                self.logger.info("处理请求响应: {} - {}".format(request_id, request_info.get('type')))
             
             # 根据响应类型发射相应信号
             if '/response/status' in topic:
                 self.status_received.emit(data)
+                self.logger.info("收到状态响应")
             elif '/response/image' in topic:
                 self.image_received.emit(data)
-            elif topic.endswith('/pong'):
-                self.logger.info(f"收到pong响应: {data}")
+                self.logger.info("收到图像响应")
+            elif '/response/mode' in topic:
+                self.mode_response_received.emit(data)
+                self.logger.info("收到模式响应")
+            elif '/response/connection_test' in topic:
+                self.connection_test_response_received.emit(data)
+                self.logger.info("收到连接测试响应")
             
-        except json.JSONDecodeError:
-            self.logger.error(f"响应消息格式错误: {payload}")
+        except Exception as e:
+            self.logger.error("响应消息处理失败: {}".format(e))
+    
+    def _handle_pong_message(self, topic, data):
+        """处理pong消息"""
+        try:
+            self.pong_received.emit(data)
+            self.logger.info("收到pong响应")
+        except Exception as e:
+            self.logger.error("pong消息处理失败: {}".format(e))
     
     def on_publish(self, client, userdata, mid):
         """消息发布回调"""
-        self.logger.debug(f"消息发布成功, MID: {mid}")
+        self.logger.debug("消息发布成功, MID: {}".format(mid))
     
     def on_subscribe(self, client, userdata, mid, granted_qos):
         """订阅回调"""
-        self.logger.debug(f"订阅成功, MID: {mid}, QoS: {granted_qos}")
+        self.logger.debug("订阅成功, MID: {}, QoS: {}".format(mid, granted_qos))
     
     def on_log(self, client, userdata, level, buf):
         """日志回调"""
         # 只记录错误级别的日志
         if level == mqtt.MQTT_LOG_ERR:
-            self.logger.error(f"MQTT错误: {buf}")
+            self.logger.error("MQTT错误: {}".format(buf))
         elif level == mqtt.MQTT_LOG_WARNING:
-            self.logger.warning(f"MQTT警告: {buf}")
+            self.logger.warning("MQTT警告: {}".format(buf))
     
-    # ================== 新增请求方法 ==================
-    
-    def request_robot_status(self, status_type='full', callback=None):
-        """请求机器人状态"""
-        request_id = f"status_{int(time.time() * 1000)}"
-        topic = f"robot/{self.robot_id}/request/status"
-        payload = {
-            "type": status_type,
-            "request_id": request_id,
-            "timestamp": time.time()
-        }
-        
-        # 记录请求
-        if callback:
-            self.pending_requests[request_id] = {
-                "callback": callback,
-                "timestamp": time.time(),
-                "type": "status"
-            }
-        
-        return self.publish(topic, payload)
-    
-    def request_robot_image(self, image_type='rgb', quality=80, callback=None):
-        """请求机器人图像"""
-        request_id = f"image_{int(time.time() * 1000)}"
-        topic = f"robot/{self.robot_id}/request/image"
-        payload = {
-            "type": image_type,
-            "quality": quality,
-            "request_id": request_id,
-            "timestamp": time.time()
-        }
-        
-        # 记录请求
-        if callback:
-            self.pending_requests[request_id] = {
-                "callback": callback,
-                "timestamp": time.time(),
-                "type": "image"
-            }
-        
-        return self.publish(topic, payload)
-    
-    def test_connection(self, callback=None):
-        """测试连接"""
-        request_id = f"test_{int(time.time() * 1000)}"
-        topic = f"robot/{self.robot_id}/request/connection_test"
-        payload = {
-            "request_id": request_id,
-            "timestamp": time.time()
-        }
-        
-        # 记录请求
-        if callback:
-            self.pending_requests[request_id] = {
-                "callback": callback,
-                "timestamp": time.time(),
-                "type": "connection_test"
-            }
-        
-        return self.publish(topic, payload)
-    
-    def ping_robot(self):
-        """Ping机器人"""
-        topic = f"robot/{self.robot_id}/ping"
-        payload = {
-            "timestamp": time.time()
-        }
-        return self.publish(topic, payload)
     # ================== 重连机制 ==================
     
     def start_reconnect(self):
@@ -468,7 +515,8 @@ class MQTTClient(QObject):
             return
         
         self.stop_reconnect = False
-        self.reconnect_thread = threading.Thread(target=self.reconnect_loop, daemon=True)
+        self.reconnect_thread = threading.Thread(target=self.reconnect_loop)
+        self.reconnect_thread.daemon = True
         self.reconnect_thread.start()
         self.logger.info("启动MQTT自动重连")
     
@@ -476,7 +524,7 @@ class MQTTClient(QObject):
         """重连循环"""
         while not self.stop_reconnect and not self.connected:
             try:
-                self.logger.info(f"尝试重新连接MQTT服务器...")
+                self.logger.info("尝试重新连接MQTT服务器...")
                 
                 # 停止当前客户端
                 self.client.loop_stop()
@@ -493,7 +541,7 @@ class MQTTClient(QObject):
                     break
                     
             except Exception as e:
-                self.logger.error(f"MQTT重连失败: {e}")
+                self.logger.error("MQTT重连失败: {}".format(e))
             
             # 等待重连间隔
             time.sleep(self.reconnect_interval)
@@ -512,54 +560,4 @@ class MQTTClient(QObject):
             "connected": self.connected,
             "robot_id": self.robot_id,
             "subscribed_topics": self.subscribed_topics.copy()
-        }
-    
-    def update_config(self, new_config):
-        """更新配置"""
-        # 断开当前连接
-        if self.connected:
-            self.disconnect()
-        
-        # 更新配置
-        self.config = new_config
-        
-        # 重新初始化配置
-        mqtt_config = new_config.get('mqtt', {})
-        self.host = mqtt_config.get('host', 'localhost')
-        self.port = mqtt_config.get('port', 1883)
-        self.username = mqtt_config.get('username', '')
-        self.password = mqtt_config.get('password', '')
-        
-        robot_config = new_config.get('robot', {})
-        self.robot_id = robot_config.get('id', 'transbot_001')
-        
-        # 重新设置客户端
-        self.setup_client()
-        
-        self.logger.info("MQTT配置已更新")
-    
-    def get_robot_topics(self):
-        """获取机器人相关主题列表"""
-        return {
-            'commands': {
-                'mode': f"robot/{self.robot_id}/command/mode",
-                'velocity': f"robot/{self.robot_id}/command/velocity",
-                'navigation': f"robot/{self.robot_id}/command/navigation",
-                'elevator': f"robot/{self.robot_id}/command/elevator",
-                'camera': f"robot/{self.robot_id}/command/camera",
-                'emergency': f"robot/{self.robot_id}/command/emergency",
-                'task': f"robot/{self.robot_id}/command/task"
-            },
-            'reports': {
-                'status': f"robot/{self.robot_id}/status",
-                'feedback': f"robot/{self.robot_id}/feedback",
-                'telemetry': f"robot/{self.robot_id}/telemetry",
-                'heartbeat': f"robot/{self.robot_id}/heartbeat",
-                'task_status': f"robot/{self.robot_id}/task_status",
-                'task_feedback': f"robot/{self.robot_id}/task_feedback"
-            },
-            'requests': {
-                'status': f"robot/{self.robot_id}/request/status",
-                'image': f"robot/{self.robot_id}/request/image"
-            }
         }
