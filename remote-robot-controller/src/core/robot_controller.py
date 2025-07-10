@@ -5,7 +5,6 @@ import json
 import time
 from PyQt5.QtCore import QObject, pyqtSignal, QTimer
 
-# 修复导入 - 使用绝对导入
 from core.mqtt_client import MQTTClient
 from core.logger import Logger
 
@@ -18,6 +17,7 @@ class RobotController(QObject):
     image_received = pyqtSignal(object)  # QImage or bytes
     connection_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
+    image_data_received = pyqtSignal(dict)  # 图像数据接收
     
     def __init__(self, config):
         super().__init__()
@@ -31,6 +31,8 @@ class RobotController(QObject):
         self.mqtt_client.message_received.connect(self.handle_mqtt_message)
         self.mqtt_client.connection_changed.connect(self.on_connection_changed)
         self.mqtt_client.error_occurred.connect(self.error_occurred.emit)
+        self.mqtt_client.status_received.connect(self.handle_status_response)
+        self.mqtt_client.image_received.connect(self.handle_image_response)
         
         # 机器人状态
         self.robot_status = {
@@ -95,10 +97,6 @@ class RobotController(QObject):
         """发送任务"""
         return self.mqtt_client.send_task_command(task_data)
     
-    def update_status(self):
-        """更新状态（外部调用）"""
-        self.mqtt_client.request_status()
-    
     def handle_mqtt_message(self, topic, payload):
         """处理MQTT消息"""
         try:
@@ -119,6 +117,55 @@ class RobotController(QObject):
             self.logger.info("已连接到机器人")
         else:
             self.logger.warning("与机器人连接断开")
+    
+    def handle_status_response(self, status_data):
+        """处理状态响应"""
+        try:
+            if 'status' in status_data:
+                self.robot_status.update(status_data['status'])
+                self.status_updated.emit(self.robot_status.copy())
+                
+                if self.debug_mode:
+                    print(f"[ROBOT_CONTROLLER] 收到状态响应: {status_data}")
+                
+        except Exception as e:
+            self.logger.error(f"处理状态响应失败: {e}")
+    
+    def handle_image_response(self, image_data):
+        """处理图像响应"""
+        try:
+            if self.debug_mode:
+                print(f"[ROBOT_CONTROLLER] 收到图像响应: 大小={len(image_data.get('image_data', ''))//1024}KB")
+            
+            self.image_data_received.emit(image_data)
+            
+        except Exception as e:
+            self.logger.error(f"处理图像响应失败: {e}")
+    
+    def request_current_status(self):
+        """请求当前状态"""
+        def status_callback(response):
+            if self.debug_mode:
+                print(f"[ROBOT_CONTROLLER] 状态请求回调: {response}")
+        
+        return self.mqtt_client.request_robot_status('full', status_callback)
+    
+    def request_robot_image(self, quality=80):
+        """请求机器人图像"""
+        def image_callback(response):
+            if self.debug_mode:
+                print(f"[ROBOT_CONTROLLER] 图像请求回调: 收到{len(response.get('image_data', ''))//1024}KB图像")
+        
+        return self.mqtt_client.request_robot_image('rgb', quality, image_callback)
+    
+    def test_robot_connection(self):
+        """测试机器人连接"""
+        def test_callback(response):
+            latency = response.get('latency_ms', 0)
+            if self.debug_mode:
+                print(f"[ROBOT_CONTROLLER] 连接测试结果: 延迟={latency:.2f}ms")
+        
+        return self.mqtt_client.test_connection(test_callback)
     
     def update_config(self, new_config):
         """更新配置"""

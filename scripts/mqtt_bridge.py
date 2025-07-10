@@ -30,6 +30,17 @@ class MQTTBridge:
         
         # 图像处理
         self.bridge = CvBridge()
+        self.latest_image = None
+
+        # 机器人状态缓存
+        self.robot_status_cache = {
+            "mode": "pause",
+            "position": {"x": 0, "y": 0, "z": 0},
+            "velocity": {"linear": 0, "angular": 0},
+            "battery": 100,
+            "system_status": "unknown",
+            "timestamp": time.time()
+        }
         
         # 线程锁
         self.publish_lock = threading.Lock()
@@ -167,8 +178,8 @@ class MQTTBridge:
             self.mqtt_connected = True
             rospy.loginfo("MQTT连接成功")
             
-            # 使用配置的主题订阅
-            topics = [
+            # 订阅命令主题
+            command_topics = [
                 (self._get_topic('commands', 'mode'), 0),
                 (self._get_topic('commands', 'velocity'), 0),
                 (self._get_topic('commands', 'navigation'), 0),
@@ -176,17 +187,32 @@ class MQTTBridge:
                 (self._get_topic('commands', 'camera'), 0),
                 (self._get_topic('commands', 'emergency'), 0),
                 (self._get_topic('commands', 'task'), 0),
-                ("robot/{}/request/status".format(self.robot_id), 0),
-                ("robot/{}/request/image".format(self.robot_id), 0),
-                ("system/broadcast", 0),
             ]
+
+            # 订阅请求主题
+            request_topics = [
+                (f"robot/{self.robot_id}/request/status", 0),
+                (f"robot/{self.robot_id}/request/image", 0),
+                (f"robot/{self.robot_id}/request/mode", 0),
+                (f"robot/{self.robot_id}/request/connection_test", 0),
+            ]
+
+            # 订阅系统主题
+            system_topics = [
+                ("system/broadcast", 0),
+                (f"robot/{self.robot_id}/ping", 0),
+            ]
+
+            all_topics = command_topics + request_topics + system_topics
             
-            for topic, qos in topics:
+            
+            for topic, qos in all_topics:
                 client.subscribe(topic, qos)
                 rospy.loginfo("订阅MQTT主题: {}".format(topic))
                 
             # 发布连接状态
             self._publish_mqtt_status("connected")
+            self._publish_robot_status()
             
         else:
             rospy.logerr("MQTT连接失败，错误代码: {}".format(rc))
@@ -221,10 +247,17 @@ class MQTTBridge:
                 self._handle_emergency_command(payload)
             elif topic.endswith('/command/task'):
                 self._handle_task_command(payload)
+            # 新增请求处理
             elif topic.endswith('/request/status'):
                 self._handle_status_request(payload)
             elif topic.endswith('/request/image'):
                 self._handle_image_request(payload)
+            elif topic.endswith('/request/mode'):
+                self._handle_mode_request(payload)
+            elif topic.endswith('/request/connection_test'):
+                self._handle_connection_test_request(payload)
+            elif topic.endswith('/ping'):
+                self._handle_ping_request(payload)
             elif topic == 'system/broadcast':
                 self._handle_broadcast_message(payload)
             else:
@@ -357,9 +390,29 @@ class MQTTBridge:
         try:
             data = json.loads(payload)
             request_type = data.get('type', 'full')
+            request_id = data.get('request_id', str(time.time()))
             
-            # 这里可以根据请求类型返回不同的状态信息
-            rospy.loginfo("状态请求: type={}".format(request_type))
+            rospy.loginfo("收到状态请求: type={}, request_id={}".format(request_type, request_id))
+            
+            # 准备响应数据
+            response = {
+                "request_id": request_id,
+                "robot_id": self.robot_id,
+                "timestamp": time.time(),
+                "status": self.robot_status_cache.copy()
+            }
+            
+            if request_type == 'simple':
+                # 简化状态，只返回关键信息
+                response["status"] = {
+                    "mode": self.robot_status_cache.get("mode", "pause"),
+                    "system_status": self.robot_status_cache.get("system_status", "unknown"),
+                    "battery": self.robot_status_cache.get("battery", 100)
+                }
+            
+            # 发送响应
+            response_topic = self._get_topic('reports', 'status')
+            self._publish_to_cloud(response_topic, json.dumps(response))
             
         except json.JSONDecodeError:
             rospy.logerr("状态请求格式错误: {}".format(payload))
@@ -369,17 +422,101 @@ class MQTTBridge:
         try:
             data = json.loads(payload)
             image_type = data.get('type', 'rgb')
+            quality = data.get('quality', 80)  # JPEG质量
+            request_id = data.get('request_id', str(time.time()))
             
-            # 触发图像捕获
-            msg = Bool()
-            msg.data = True
-            self.camera_pub.publish(msg)
+            rospy.loginfo("收到图像请求: type={}, quality={}, request_id={}".format(
+                image_type, quality, request_id))
             
-            rospy.loginfo("图像请求: type={}".format(image_type))
+            if self.latest_image is not None:
+                # 处理并发送图像
+                self._send_image_response(self.latest_image, request_id, quality)
+            else:
+                # 触发图像捕获
+                msg = Bool()
+                msg.data = True
+                self.camera_pub.publish(msg)
+                
+                # 延迟响应 - 等待图像捕获
+                def delayed_response():
+                    time.sleep(0.5)  # 等待500ms
+                    if self.latest_image is not None:
+                        self._send_image_response(self.latest_image, request_id, quality)
+                    else:
+                        # 发送错误响应
+                        error_response = {
+                            "request_id": request_id,
+                            "robot_id": self.robot_id,
+                            "timestamp": time.time(),
+                            "error": "Failed to capture image",
+                            "image_data": None
+                        }
+                        topic = f"robot/{self.robot_id}/response/image"
+                        self._publish_to_cloud(topic, json.dumps(error_response))
+                
+                threading.Thread(target=delayed_response, daemon=True).start()
             
         except json.JSONDecodeError:
             rospy.logerr("图像请求格式错误: {}".format(payload))
     
+    def _handle_mode_request(self, payload):
+        """处理模式请求"""
+        try:
+            data = json.loads(payload)
+            request_id = data.get('request_id', str(time.time()))
+            
+            response = {
+                "request_id": request_id,
+                "robot_id": self.robot_id,
+                "timestamp": time.time(),
+                "current_mode": self.robot_status_cache.get("mode", "pause")
+            }
+            
+            topic = f"robot/{self.robot_id}/response/mode"
+            self._publish_to_cloud(topic, json.dumps(response))
+            
+        except json.JSONDecodeError:
+            rospy.logerr("模式请求格式错误: {}".format(payload))
+    
+    def _handle_connection_test_request(self, payload):
+        """处理连接测试请求"""
+        try:
+            data = json.loads(payload)
+            request_id = data.get('request_id', str(time.time()))
+            
+            response = {
+                "request_id": request_id,
+                "robot_id": self.robot_id,
+                "timestamp": time.time(),
+                "status": "connected",
+                "latency_ms": (time.time() - data.get('timestamp', time.time())) * 1000
+            }
+            
+            topic = f"robot/{self.robot_id}/response/connection_test"
+            self._publish_to_cloud(topic, json.dumps(response))
+            
+        except json.JSONDecodeError:
+            rospy.logerr("连接测试请求格式错误: {}".format(payload))
+    
+    def _handle_ping_request(self, payload):
+        """处理ping请求"""
+        try:
+            data = json.loads(payload)
+            request_time = data.get('timestamp', time.time())
+            
+            response = {
+                "robot_id": self.robot_id,
+                "timestamp": time.time(),
+                "request_timestamp": request_time,
+                "pong": True
+            }
+            
+            topic = f"robot/{self.robot_id}/pong"
+            self._publish_to_cloud(topic, json.dumps(response))
+            
+        except json.JSONDecodeError:
+            rospy.logerr("Ping请求格式错误: {}".format(payload))
+
     def _handle_broadcast_message(self, payload):
         """处理广播消息"""
         try:
@@ -396,12 +533,52 @@ class MQTTBridge:
         except json.JSONDecodeError:
             rospy.logerr("广播消息格式错误: {}".format(payload))
     
+    def _send_image_response(self, image_msg, request_id, quality=80):
+        """发送图像响应"""
+        try:
+            # 将ROS图像转换为OpenCV格式
+            cv_image = self.bridge.imgmsg_to_cv2(image_msg, "bgr8")
+            
+            # 压缩图像
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), quality]
+            _, buffer = cv2.imencode('.jpg', cv_image, encode_param)
+            
+            # 转换为base64
+            image_base64 = base64.b64encode(buffer).decode('utf-8')
+            
+            response = {
+                "request_id": request_id,
+                "robot_id": self.robot_id,
+                "timestamp": time.time(),
+                "image_format": "jpeg",
+                "image_quality": quality,
+                "image_size": {
+                    "width": cv_image.shape[1],
+                    "height": cv_image.shape[0]
+                },
+                "image_data": image_base64
+            }
+            
+            topic = f"robot/{self.robot_id}/response/image"
+            self._publish_to_cloud(topic, json.dumps(response))
+            
+            rospy.loginfo("图像响应已发送: {}x{}, 质量={}, 大小={}KB".format(
+                cv_image.shape[1], cv_image.shape[0], quality, len(image_base64)//1024))
+            
+        except Exception as e:
+            rospy.logerr("图像响应处理错误: {}".format(e))
+    
     # ================== ROS消息处理 ==================
     
     def _robot_status_callback(self, msg):
         """机器人状态回调"""
         try:
-            # 使用配置的主题转发到云端
+            # 解析状态数据并更新缓存
+            status_data = json.loads(msg.data)
+            self.robot_status_cache.update(status_data)
+            self.robot_status_cache["timestamp"] = time.time()
+            
+            # 转发到云端
             topic = self._get_topic('reports', 'status')
             self._publish_to_cloud(topic, msg.data)
             
@@ -466,9 +643,35 @@ class MQTTBridge:
     
     def _image_callback(self, msg):
         """图像数据回调"""
-        # 这里可以实现图像压缩和传输
-        # 通常图像数据较大，建议按需传输
-        pass
+        # 更新最新图像缓存
+        self.latest_image = msg
+        
+        # 可选：定期上传图像（低频率）
+        current_time = time.time()
+        if not hasattr(self, '_last_image_upload'):
+            self._last_image_upload = 0
+        
+        # 每30秒自动上传一次图像（可配置）
+        if current_time - self._last_image_upload > 30:
+            self._send_periodic_image()
+            self._last_image_upload = current_time
+        
+    def _send_periodic_image(self):
+        """发送周期性图像"""
+        if self.latest_image is not None:
+            request_id = f"periodic_{int(time.time())}"
+            self._send_image_response(self.latest_image, request_id, quality=60)
+    
+    def _publish_robot_status(self):
+        """发布机器人状态"""
+        if self.mqtt_connected:
+            topic = self._get_topic('reports', 'status')
+            status_msg = {
+                "robot_id": self.robot_id,
+                "timestamp": time.time(),
+                "status": self.robot_status_cache.copy()
+            }
+            self._publish_to_cloud(topic, json.dumps(status_msg))
     
     # ================== 后台线程 ==================
     

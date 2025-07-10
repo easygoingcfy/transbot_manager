@@ -13,6 +13,8 @@ class MQTTClient(QObject):
     """MQTT客户端 - 负责MQTT通信"""
     
     # 定义信号
+    status_received = pyqtSignal(dict)  # 状态响应
+    image_received = pyqtSignal(dict)   # 图像响应
     message_received = pyqtSignal(str, str)  # topic, payload
     connection_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
@@ -29,6 +31,10 @@ class MQTTClient(QObject):
         self.username = mqtt_config.get('username', '')
         self.password = mqtt_config.get('password', '')
         self.keepalive = mqtt_config.get('keepalive', 60)
+        
+        # 请求追踪
+        self.pending_requests = {}
+        self.request_timeout = 10  # 请求超时时间(秒)
         
         # 机器人配置
         robot_config = config.get('robot', {})
@@ -187,12 +193,22 @@ class MQTTClient(QObject):
     def subscribe_robot_topics(self):
         """订阅机器人相关的所有主题"""
         topics = [
+            # 状态和反馈主题
             f"robot/{self.robot_id}/status",
             f"robot/{self.robot_id}/feedback",
             f"robot/{self.robot_id}/telemetry",
             f"robot/{self.robot_id}/heartbeat",
             f"robot/{self.robot_id}/task_status",
             f"robot/{self.robot_id}/task_feedback",
+            
+            # 响应主题 - 新增
+            f"robot/{self.robot_id}/response/status",
+            f"robot/{self.robot_id}/response/image",
+            f"robot/{self.robot_id}/response/mode",
+            f"robot/{self.robot_id}/response/connection_test",
+            f"robot/{self.robot_id}/pong",
+            
+            # 系统主题
             "system/broadcast"
         ]
         
@@ -271,15 +287,6 @@ class MQTTClient(QObject):
             task_data["timestamp"] = time.time()
         return self.publish(topic, task_data)
     
-    def request_status(self):
-        """请求机器人状态"""
-        topic = f"robot/{self.robot_id}/request/status"
-        payload = {
-            "request_type": "status",
-            "timestamp": time.time()
-        }
-        return self.publish(topic, payload)
-    
     def request_image(self):
         """请求机器人图像"""
         topic = f"robot/{self.robot_id}/request/image"
@@ -332,12 +339,41 @@ class MQTTClient(QObject):
             
             self.logger.debug(f"收到MQTT消息: {topic}")
             
-            # 发射信号给GUI
-            self.message_received.emit(topic, payload)
+            # 处理响应消息
+            if '/response/' in topic or topic.endswith('/pong'):
+                self._handle_response_message(topic, payload)
+            else:
+                # 发射信号给GUI
+                self.message_received.emit(topic, payload)
             
         except Exception as e:
             self.logger.error(f"处理MQTT消息失败: {e}")
             self.error_occurred.emit(f"消息处理失败: {e}")
+    
+    def _handle_response_message(self, topic, payload):
+        """处理响应消息"""
+        try:
+            data = json.loads(payload)
+            request_id = data.get('request_id')
+            
+            if request_id and request_id in self.pending_requests:
+                # 移除待处理请求
+                request_info = self.pending_requests.pop(request_id)
+                callback = request_info.get('callback')
+                
+                if callback:
+                    callback(data)
+            
+            # 根据响应类型发射相应信号
+            if '/response/status' in topic:
+                self.status_received.emit(data)
+            elif '/response/image' in topic:
+                self.image_received.emit(data)
+            elif topic.endswith('/pong'):
+                self.logger.info(f"收到pong响应: {data}")
+            
+        except json.JSONDecodeError:
+            self.logger.error(f"响应消息格式错误: {payload}")
     
     def on_publish(self, client, userdata, mid):
         """消息发布回调"""
@@ -355,6 +391,75 @@ class MQTTClient(QObject):
         elif level == mqtt.MQTT_LOG_WARNING:
             self.logger.warning(f"MQTT警告: {buf}")
     
+    # ================== 新增请求方法 ==================
+    
+    def request_robot_status(self, status_type='full', callback=None):
+        """请求机器人状态"""
+        request_id = f"status_{int(time.time() * 1000)}"
+        topic = f"robot/{self.robot_id}/request/status"
+        payload = {
+            "type": status_type,
+            "request_id": request_id,
+            "timestamp": time.time()
+        }
+        
+        # 记录请求
+        if callback:
+            self.pending_requests[request_id] = {
+                "callback": callback,
+                "timestamp": time.time(),
+                "type": "status"
+            }
+        
+        return self.publish(topic, payload)
+    
+    def request_robot_image(self, image_type='rgb', quality=80, callback=None):
+        """请求机器人图像"""
+        request_id = f"image_{int(time.time() * 1000)}"
+        topic = f"robot/{self.robot_id}/request/image"
+        payload = {
+            "type": image_type,
+            "quality": quality,
+            "request_id": request_id,
+            "timestamp": time.time()
+        }
+        
+        # 记录请求
+        if callback:
+            self.pending_requests[request_id] = {
+                "callback": callback,
+                "timestamp": time.time(),
+                "type": "image"
+            }
+        
+        return self.publish(topic, payload)
+    
+    def test_connection(self, callback=None):
+        """测试连接"""
+        request_id = f"test_{int(time.time() * 1000)}"
+        topic = f"robot/{self.robot_id}/request/connection_test"
+        payload = {
+            "request_id": request_id,
+            "timestamp": time.time()
+        }
+        
+        # 记录请求
+        if callback:
+            self.pending_requests[request_id] = {
+                "callback": callback,
+                "timestamp": time.time(),
+                "type": "connection_test"
+            }
+        
+        return self.publish(topic, payload)
+    
+    def ping_robot(self):
+        """Ping机器人"""
+        topic = f"robot/{self.robot_id}/ping"
+        payload = {
+            "timestamp": time.time()
+        }
+        return self.publish(topic, payload)
     # ================== 重连机制 ==================
     
     def start_reconnect(self):

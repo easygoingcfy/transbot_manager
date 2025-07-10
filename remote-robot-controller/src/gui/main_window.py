@@ -35,11 +35,6 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.setup_connections()
         
-        # 状态更新定时器
-        self.status_timer = QTimer()
-        self.status_timer.timeout.connect(self.update_status)
-        self.status_timer.start(1000)  # 每秒更新一次
-        
         self.logger.info("主窗口初始化完成")
     
     def init_ui(self):
@@ -230,6 +225,7 @@ class MainWindow(QMainWindow):
         # 机器人控制器信号
         self.robot_controller.status_updated.connect(self.status_panel.update_status)
         self.robot_controller.connection_changed.connect(self.on_connection_changed)
+        self.robot_controller.connection_changed.connect(self.control_panel.set_connection_status)
         self.robot_controller.image_received.connect(self.camera_panel.display_image)
         self.robot_controller.error_occurred.connect(self.show_error)
         
@@ -277,12 +273,6 @@ class MainWindow(QMainWindow):
         
         # 更新状态面板
         self.status_panel.update_connection_status(connected)
-    
-    def update_status(self):
-        """更新状态"""
-        # 定期更新机器人状态
-        if self.robot_controller.is_connected():
-            self.robot_controller.update_status()
     
     def open_settings(self):
         """打开设置对话框"""
