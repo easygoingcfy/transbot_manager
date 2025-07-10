@@ -1,0 +1,4 @@
+PyQt5>=5.15.0
+paho-mqtt>=1.6.0
+PyYAML>=6.0
+Pillow>=8.0.0

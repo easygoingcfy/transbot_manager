@@ -1,0 +1,57 @@
+# 机器人配置文件
+robots:
+  transbot_001:
+    name: "TransBot 001"
+    type: "transbot"
+    description: "主要测试机器人"
+    capabilities:
+      - navigation
+      - camera
+      - elevator
+      - patrol
+    max_velocity:
+      linear: 1.0  # m/s
+      angular: 2.0  # rad/s
+    dimensions:
+      length: 0.5  # m
+      width: 0.4   # m
+      height: 0.3  # m
+    sensors:
+      - lidar
+      - camera
+      - imu
+      - ultrasonic
+    
+  transbot_002:
+    name: "TransBot 002"
+    type: "transbot"
+    description: "备用机器人"
+    capabilities:
+      - navigation
+      - camera
+      - patrol
+    max_velocity:
+      linear: 0.8  # m/s
+      angular: 1.5  # rad/s
+    dimensions:
+      length: 0.5  # m
+      width: 0.4   # m
+      height: 0.3  # m
+    sensors:
+      - camera
+      - imu
+      - ultrasonic
+
+# 默认配置模板
+default_profile:
+  type: "transbot"
+  capabilities:
+    - navigation
+    - camera
+  max_velocity:
+    linear: 0.5
+    angular: 1.0
+  safety:
+    emergency_stop: true
+    collision_detection: true
+    max_battery_threshold: 20  # %

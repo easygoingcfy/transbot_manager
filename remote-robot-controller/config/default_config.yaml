@@ -1,0 +1,60 @@
+# 远程机器人控制器默认配置
+
+# MQTT配置
+mqtt:
+  host: localhost
+  port: 1883
+  username: ""
+  password: ""
+  keepalive: 60
+  ssl:
+    enabled: false
+    ca_cert: ""
+
+# 机器人配置
+robot:
+  id: transbot_001
+  name: TransBot
+  type: transbot
+  control:
+    max_linear_velocity: 0.5  # m/s
+    max_angular_velocity: 1.0  # rad/s
+    command_timeout: 60
+  safety:
+    emergency_enabled: true
+    collision_detection: false
+
+# 界面配置
+ui:
+  theme: 默认
+  language: 中文
+  font_size: 10
+  status_update_rate: 10  # Hz
+  image_update_rate: 5    # Hz
+  logging:
+    level: INFO
+    to_file: false
+
+# 网络配置
+network:
+  connect_timeout: 10
+  reconnect_interval: 5
+  auto_reconnect: true
+
+# 主题映射
+topic_mapping:
+  commands:
+    mode: "robot/{robot_id}/command/mode"
+    velocity: "robot/{robot_id}/command/velocity"
+    navigation: "robot/{robot_id}/command/navigation"
+    elevator: "robot/{robot_id}/command/elevator"
+    camera: "robot/{robot_id}/command/camera"
+    emergency: "robot/{robot_id}/command/emergency"
+    task: "robot/{robot_id}/command/task"
+  reports:
+    status: "robot/{robot_id}/status"
+    feedback: "robot/{robot_id}/feedback"
+    telemetry: "robot/{robot_id}/telemetry"
+    heartbeat: "robot/{robot_id}/heartbeat"
+    task_status: "robot/{robot_id}/task_status"
+    task_feedback: "robot/{robot_id}/task_feedback"
