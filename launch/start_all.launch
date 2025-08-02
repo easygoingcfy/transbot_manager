@@ -5,6 +5,8 @@
     <arg name="log_level" default="info"/>
     <arg name="with_hardware" default="true"/>
     <arg name="with_navigation" default="true"/>  <!-- 是否启动导航 -->
+    <arg name="with_mapping" default="false"/>    <!-- 是否启动建图 -->
+    <arg name="map_type" default="cartographer"/>  <!-- 建图类型 -->
     <arg name="map_name" default="house"/>         <!-- 地图名称 -->
     <arg name="open_rviz" default="false"/>       <!-- 是否打开rviz -->
 
@@ -21,8 +23,8 @@
         <include file="$(find transbot_bringup)/launch/bringup.launch"/>
 
         <!-- 导航需要的传感器 -->
-        <group if="$(arg with_navigation)">
-            <!-- 激光雷达 - 导航必需 -->
+        <group if="$(eval arg('with_navigation') or arg('with_mapping'))">
+            <!-- 激光雷达 - 导航和建图都需要 -->
             <include file="$(find transbot_nav)/launch/library/rplidar.launch"/>
             <node pkg="tf" type="static_transform_publisher" name="base_link_to_laser"
                   args="-0.03 0 0.13 3.1416 0 0  /base_link /laser  30"/>
@@ -33,6 +35,20 @@
                   args="0.08 0 0.10403 -0.05 0 0  /base_link /camera_link  30"/>
         </group>
 
+    </group>
+
+    <!-- ========== 建图系统 ========== -->
+    <group if="$(arg with_mapping)">
+        <!-- 建图算法 (不包含app.launch) -->
+        <include file="$(find transbot_nav)/launch/library/$(arg map_type).launch"/>
+        
+        <!-- rviz可视化 -->
+        <group if="$(arg open_rviz)">
+            <include if="$(eval arg('map_type') != 'cartographer')"
+                     file="$(find transbot_nav)/launch/view/view_map.launch"/>
+            <include if="$(eval arg('map_type') == 'cartographer')"
+                     file="$(find transbot_nav)/launch/view/view_cartographer.launch"/>
+        </group>
     </group>
 
         <!-- ========== 导航系统 ========== -->
@@ -85,6 +101,15 @@
           output="screen" respawn="true" respawn_delay="3">
         <param name="cloud_report_interval" value="2.0"/>
     </node>
+    
+    <!-- 建图管理器 -->
+    <group if="$(arg with_mapping)">
+        <node name="mapping_manager" pkg="transbot_manager" type="mapping_manager.py" 
+              output="screen" respawn="true" respawn_delay="3">
+            <param name="map_dir" value="$(find transbot_nav)/maps"/>
+            <param name="map_name" value="$(arg map_name)"/>
+        </node>
+    </group>
     
     <!-- 测试工具节点 (可选) -->
     <group if="$(arg test_mode)" ns="test">

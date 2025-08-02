@@ -21,3 +21,6 @@ install/
 
 # python 
 *.pyc
+
+
+*.zip
