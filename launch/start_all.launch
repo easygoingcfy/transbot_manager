@@ -6,6 +6,7 @@
     <arg name="with_hardware" default="true"/>
     <arg name="with_navigation" default="true"/>  <!-- 是否启动导航 -->
     <arg name="with_mapping" default="false"/>    <!-- 是否启动建图 -->
+    <arg name="with_elevator" default="true"/>    <!-- 是否启用升降杆继电器控制 -->
     <arg name="map_type" default="cartographer"/>  <!-- 建图类型 -->
     <arg name="map_name" default="house"/>         <!-- 地图名称 -->
     <arg name="open_rviz" default="false"/>       <!-- 是否打开rviz -->
@@ -20,7 +21,8 @@
     <!-- ========== 硬件驱动层 ========== -->
     <group if="$(arg with_hardware)">
         <!-- 底盘驱动 -->
-        <include file="$(find transbot_bringup)/launch/bringup.launch"/>
+        <!-- <include file="$(find transbot_bringup)/launch/bringup.launch"/> -->
+        <include file="$(find dlrobot_robot)/launch/base_serial.launch"/>
 
         <!-- 导航需要的传感器 -->
         <group if="$(eval arg('with_navigation') or arg('with_mapping'))">
@@ -33,6 +35,20 @@
             <include file="$(find astra_camera)/launch/astrapro.launch"/>
             <node pkg="tf" type="static_transform_publisher" name="base_link_to_camera"
                   args="0.08 0 0.10403 -0.05 0 0  /base_link /camera_link  30"/>
+        </group>
+
+        <!-- 升降杆继电器控制（可选） -->
+        <group if="$(arg with_elevator)">
+            <node pkg="ros_relay_controller" type="relay_controller.py" name="relay_controller"
+                  output="screen" respawn="true" respawn_delay="3">
+                <!-- 串口与设备参数，可按需在命令行覆盖 -->
+                <param name="port" value="/dev/ttyUSB0"/>
+                <param name="baudrate" value="9600"/>
+                <param name="slave_id" value="1"/>
+                <param name="num_channels" value="2"/>
+                <param name="channel_for_enable" value="1"/>
+                <!-- 统一话题：节点内部订阅 /elevator/enable，发布 /elevator/relay_status，无需remap -->
+            </node>
         </group>
 
     </group>
@@ -51,7 +67,7 @@
         </group>
     </group>
 
-        <!-- ========== 导航系统 ========== -->
+    <!-- ========== 导航系统 ========== -->
     <group if="$(arg with_navigation)">
         <!-- 地图服务器 -->
         <node name="map_server" pkg="map_server" type="map_server" 

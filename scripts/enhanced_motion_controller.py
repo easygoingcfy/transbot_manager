@@ -8,10 +8,9 @@ import time
 import json
 import cv2
 from cv_bridge import CvBridge
-import os
 from datetime import datetime
 from robot_enums import ControlMode, SystemStatus
-from std_msgs.msg import String, Header, Bool, Float32
+from std_msgs.msg import String, Header, Bool, Float32, Int32
 from geometry_msgs.msg import Twist, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import LaserScan, Image, BatteryState
@@ -71,9 +70,8 @@ class EnhancedMotionController:
         self.cmd_vel_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=1)
         self.goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
         
-        # 外设控制
-        self.elevator_cmd_pub = rospy.Publisher('/elevator/position_cmd', Float32, queue_size=1)
-        self.elevator_enable_pub = rospy.Publisher('/elevator/enable', Bool, queue_size=1)
+        # 外设控制（统一到/elevator/command）
+        self.elevator_command_pub = rospy.Publisher('/elevator/command', Int32, queue_size=1)
         
         # 状态上报
         self.robot_status_pub = rospy.Publisher('/robot_status', String, queue_size=1)
@@ -89,7 +87,8 @@ class EnhancedMotionController:
         rospy.Subscriber('/remote_control/mode', String, self._mode_callback)
         rospy.Subscriber('/remote_control/cmd_vel', Twist, self._remote_cmd_vel_callback)
         rospy.Subscriber('/remote_control/goal', PoseStamped, self._remote_goal_callback)
-        rospy.Subscriber('/remote_control/elevator', Float32, self._remote_elevator_callback)
+        # 统一升降杆控制为Int32命令：1=上升,2=下降,0=停止
+        rospy.Subscriber('/remote_control/elevator_command', Int32, self._remote_elevator_cmd_callback)
         rospy.Subscriber('/remote_control/camera', Bool, self._remote_camera_callback)
         rospy.Subscriber('/remote_control/emergency_stop', Bool, self._emergency_stop_callback)
         
@@ -168,13 +167,11 @@ class EnhancedMotionController:
             else:
                 self._publish_control_feedback("导航指令被拒绝：当前模式 {}".format(self.control_mode.value))
     
-    def _remote_elevator_callback(self, msg):
-        """处理升降杆控制指令"""
+    def _remote_elevator_cmd_callback(self, msg):
+        """处理升降杆离散命令: 1=上升, 2=下降, 0=停止"""
         if not self.emergency_stop:
-            self.elevator_enable_pub.publish(Bool(True))
-            rospy.sleep(0.1)
-            self.elevator_cmd_pub.publish(msg)
-            self._publish_control_feedback("升降杆目标位置: {}".format(msg.data))
+            self.elevator_command_pub.publish(Int32(msg.data))
+            self._publish_control_feedback("升降杆命令: {}".format(msg.data))
         else:
             self._publish_control_feedback("升降杆指令被拒绝：紧急停止状态")
     
@@ -275,7 +272,8 @@ class EnhancedMotionController:
         self.emergency_stop = msg.data
         if self.emergency_stop:
             self.cmd_vel_pub.publish(Twist())  # 立即停止
-            self.elevator_enable_pub.publish(Bool(False))  # 停止升降杆
+            # 统一：停止升降杆
+            self.elevator_command_pub.publish(Int32(0))
             self.system_status = SystemStatus.ERROR
             rospy.logwarn("紧急停止已激活")
             self._publish_control_feedback("紧急停止已激活")

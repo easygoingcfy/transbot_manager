@@ -267,13 +267,16 @@ class MQTTClient(QObject):
         }
         return self.publish(topic, payload)
     
-    def send_elevator_command(self, position):
-        """发送升降杆命令"""
+    def send_elevator_command(self, command):
+        """发送升降杆命令（统一离散命令接口）
+        command: 'up'|'down'|'stop' 或 1|2|0
+        """
         topic = self.get_topic('commands', 'elevator')
-        payload = {
-            "position": position,
-            "timestamp": time.time()
-        }
+        # 允许传入数字或字符串
+        if isinstance(command, (int, float)):
+            payload = {"command": int(command), "timestamp": time.time()}
+        else:
+            payload = {"command": str(command), "timestamp": time.time()}
         return self.publish(topic, payload)
     
     def send_camera_command(self, capture=True):

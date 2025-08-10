@@ -7,7 +7,7 @@ import time
 import threading
 import paho.mqtt.client as mqtt
 from datetime import datetime
-from std_msgs.msg import String, Bool, Float32
+from std_msgs.msg import String, Bool, Int32
 from geometry_msgs.msg import Twist, PoseStamped
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
@@ -154,7 +154,8 @@ class MQTTBridge:
         self.mode_pub = rospy.Publisher('/remote_control/mode', String, queue_size=1)
         self.cmd_vel_pub = rospy.Publisher('/remote_control/cmd_vel', Twist, queue_size=1)
         self.goal_pub = rospy.Publisher('/remote_control/goal', PoseStamped, queue_size=1)
-        self.elevator_pub = rospy.Publisher('/remote_control/elevator', Float32, queue_size=1)
+        # 统一升降杆为离散命令：/remote_control/elevator_command (Int32: 1=up,2=down,0=stop)
+        self.elevator_cmd_pub = rospy.Publisher('/remote_control/elevator_command', Int32, queue_size=1)
         self.camera_pub = rospy.Publisher('/remote_control/camera', Bool, queue_size=1)
         self.emergency_pub = rospy.Publisher('/remote_control/emergency_stop', Bool, queue_size=1)
         
@@ -350,16 +351,37 @@ class MQTTBridge:
             rospy.logerr("导航指令格式错误: {}".format(payload))
     
     def _handle_elevator_command(self, payload):
-        """处理升降杆指令"""
+        """处理升降杆指令（统一为离散命令）"""
         try:
             data = json.loads(payload)
-            position = data.get('position', 0.0)
+            cmd = data.get('command', None)
+            # 兼容可能的字段名
+            if cmd is None:
+                cmd = data.get('action', None)
             
-            msg = Float32()
-            msg.data = position
-            self.elevator_pub.publish(msg)
+            # 将字符串/数值映射到Int32
+            if isinstance(cmd, str):
+                cmd_l = cmd.strip().lower()
+                if cmd_l in ['up', 'raise', 'open']:
+                    val = 1
+                elif cmd_l in ['down', 'lower', 'close']:
+                    val = 2
+                elif cmd_l in ['stop', 'off', 'halt']:
+                    val = 0
+                else:
+                    rospy.logwarn("未知升降杆命令(字符串): {}".format(cmd))
+                    return
+            elif isinstance(cmd, (int, float)):
+                val = int(cmd)
+                if val not in [0,1,2]:
+                    rospy.logwarn("未知升降杆命令(数值): {}".format(cmd))
+                    return
+            else:
+                rospy.logwarn("升降杆命令缺失或类型不支持: {}".format(cmd))
+                return
             
-            rospy.loginfo("升降杆指令: position={}".format(position))
+            self.elevator_cmd_pub.publish(Int32(val))
+            rospy.loginfo("升降杆离散命令: {}".format(val))
             
         except json.JSONDecodeError:
             rospy.logerr("升降杆指令格式错误: {}".format(payload))
