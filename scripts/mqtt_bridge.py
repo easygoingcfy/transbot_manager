@@ -93,7 +93,8 @@ class MQTTBridge:
                     'elevator': 'robot/{robot_id}/command/elevator',
                     'camera': 'robot/{robot_id}/command/camera',
                     'emergency': 'robot/{robot_id}/command/emergency',
-                    'task': 'robot/{robot_id}/command/task'
+                    'task': 'robot/{robot_id}/command/task',
+                    'mapping': 'robot/{robot_id}/command/mapping'
                 },
                 'reports': {
                     'status': 'robot/{robot_id}/status',
@@ -101,7 +102,8 @@ class MQTTBridge:
                     'telemetry': 'robot/{robot_id}/telemetry',
                     'heartbeat': 'robot/{robot_id}/heartbeat',
                     'task_status': 'robot/{robot_id}/task_status',
-                    'task_feedback': 'robot/{robot_id}/task_feedback'
+                    'task_feedback': 'robot/{robot_id}/task_feedback',
+                    'mapping_status': 'robot/{robot_id}/reports/mapping_status'
                 },
                 'requests': {
                     'status': 'robot/{robot_id}/request/status',
@@ -113,7 +115,8 @@ class MQTTBridge:
                     'status': 'robot/{robot_id}/response/status',
                     'image': 'robot/{robot_id}/response/image',
                     'mode': 'robot/{robot_id}/response/mode',
-                    'connection_test': 'robot/{robot_id}/response/connection_test'
+                    'connection_test': 'robot/{robot_id}/response/connection_test',
+                    'mapping': 'robot/{robot_id}/responses/mapping'
                 },
                 'system': {
                     'broadcast': 'system/broadcast',
@@ -241,6 +244,7 @@ class MQTTBridge:
                 (self._get_topic('commands', 'camera'), 0),
                 (self._get_topic('commands', 'emergency'), 0),
                 (self._get_topic('commands', 'task'), 0),
+                (self._get_topic('commands', 'mapping'), 0),
             ]
 
             # 订阅请求主题
@@ -476,7 +480,7 @@ class MQTTBridge:
                         response = self.mapping_start_client()
                         if response.success:
                             rospy.loginfo("建图已启动: {}".format(response.message))
-                            self._publish_to_cloud('responses/mapping', {
+                            self._publish_to_cloud('responses', 'mapping', {
                                 "action": "start",
                                 "success": True,
                                 "message": response.message,
@@ -484,7 +488,7 @@ class MQTTBridge:
                             })
                         else:
                             rospy.logwarn("启动建图失败: {}".format(response.message))
-                            self._publish_to_cloud('responses/mapping', {
+                            self._publish_to_cloud('responses', 'mapping', {
                                 "action": "start",
                                 "success": False,
                                 "message": response.message,
@@ -492,7 +496,7 @@ class MQTTBridge:
                             })
                     except rospy.ServiceException as e:
                         rospy.logerr("调用建图启动服务失败: {}".format(e))
-                        self._publish_to_cloud('responses/mapping', {
+                        self._publish_to_cloud('responses', 'mapping', {
                             "action": "start",
                             "success": False,
                             "message": "服务调用失败: {}".format(e),
@@ -516,7 +520,7 @@ class MQTTBridge:
                         response = self.mapping_save_client()
                         if response.success:
                             rospy.loginfo("地图保存成功: {}".format(response.message))
-                            self._publish_to_cloud('responses/mapping', {
+                            self._publish_to_cloud('responses', 'mapping', {
                                 "action": "save",
                                 "success": True,
                                 "message": response.message,
@@ -525,7 +529,7 @@ class MQTTBridge:
                             })
                         else:
                             rospy.logwarn("保存地图失败: {}".format(response.message))
-                            self._publish_to_cloud('responses/mapping', {
+                            self._publish_to_cloud('responses', 'mapping', {
                                 "action": "save",
                                 "success": False,
                                 "message": response.message,
@@ -534,7 +538,7 @@ class MQTTBridge:
                             })
                     except rospy.ServiceException as e:
                         rospy.logerr("调用地图保存服务失败: {}".format(e))
-                        self._publish_to_cloud('responses/mapping', {
+                        self._publish_to_cloud('responses', 'mapping', {
                             "action": "save",
                             "success": False,
                             "message": "服务调用失败: {}".format(e),
@@ -550,7 +554,7 @@ class MQTTBridge:
                 if self.mapping_set_name_pub and map_name:
                     self.mapping_set_name_pub.publish(String(data=map_name))
                     rospy.loginfo("地图名称已设置为: {}".format(map_name))
-                    self._publish_to_cloud('responses/mapping', {
+                    self._publish_to_cloud('responses', 'mapping', {
                         "action": "set_name",
                         "success": True,
                         "message": "地图名称已设置",
@@ -835,7 +839,7 @@ class MQTTBridge:
             }
             
             # 发送建图状态到云端
-            self._publish_to_cloud('reports/mapping_status', status_data)
+            self._publish_to_cloud('reports', 'mapping_status', status_data)
             rospy.logdebug("建图状态已上报: {}".format(msg.data))
             
         except Exception as e:
@@ -922,12 +926,18 @@ class MQTTBridge:
     
     # ================== 辅助方法 ==================
     
-    def _publish_to_cloud(self, topic, payload):
+    def _publish_to_cloud(self, topic_category, topic_name, payload):
         """发布消息到云端"""
         if self.mqtt_connected:
             with self.publish_lock:
                 try:
-                    self.mqtt_client.publish(topic, payload, qos=0)
+                    # 如果payload是字典，转换为JSON字符串
+                    if isinstance(payload, dict):
+                        payload = json.dumps(payload, ensure_ascii=False)
+                    
+                    full_topic = self._get_topic(topic_category, topic_name)
+                    self.mqtt_client.publish(full_topic, payload, qos=0)
+                    rospy.loginfo("发布消息到云端: {} - {}".format(full_topic, payload[:100] if len(str(payload)) > 100 else payload))
                 except Exception as e:
                     rospy.logerr("MQTT发布错误: {}".format(e))
         else:
