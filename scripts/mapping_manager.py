@@ -24,7 +24,9 @@ class MappingManager:
         # 服务
         rospy.Service('~save_map', Trigger, self.handle_save_map)
         rospy.Service('~start_mapping', Trigger, self.handle_start_mapping)
-        rospy.Service('~set_map_name', String, self.handle_set_map_name)
+        
+        # 通过话题而不是服务来设置地图名称（避免服务类型错误）
+        self.map_name_sub = rospy.Subscriber('~set_map_name', String, self.handle_set_map_name_topic)
         
         # 发布器
         self.status_pub = rospy.Publisher('~mapping_status', String, queue_size=1, latch=True)
@@ -41,13 +43,14 @@ class MappingManager:
         self.status_pub.publish(String(data="mapping"))
         return TriggerResponse(success=True, message="Mapping started")
 
-    def handle_set_map_name(self, req):
-        """设置地图名称"""
-        if req.data:
-            rospy.set_param("~map_name", req.data)
-            return TriggerResponse(success=True, message="Map name set to: {}".format(req.data))
+    def handle_set_map_name_topic(self, msg):
+        """通过话题设置地图名称"""
+        if msg.data:
+            rospy.set_param("~map_name", msg.data)
+            rospy.loginfo("Map name set to: %s", msg.data)
+            self.status_pub.publish(String(data="name_set"))
         else:
-            return TriggerResponse(success=False, message="Empty map name")
+            rospy.logwarn("Empty map name ignored")
 
     def handle_save_map(self, req):
         """保存地图的主要接口"""
