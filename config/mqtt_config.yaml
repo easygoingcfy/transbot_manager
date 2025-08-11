@@ -7,6 +7,7 @@ topics:
     camera: "robot/{robot_id}/command/camera"
     emergency: "robot/{robot_id}/command/emergency"
     task: "robot/{robot_id}/command/task"
+    mapping: "robot/{robot_id}/command/mapping"
   
   reports:
     status: "robot/{robot_id}/status"
@@ -15,6 +16,7 @@ topics:
     heartbeat: "robot/{robot_id}/heartbeat"
     task_status: "robot/{robot_id}/task_status"
     task_feedback: "robot/{robot_id}/task_feedback"
+    mapping_status: "robot/{robot_id}/reports/mapping_status"
   
   # 新增请求主题配置
   requests:
@@ -29,6 +31,7 @@ topics:
     image: "robot/{robot_id}/response/image"
     mode: "robot/{robot_id}/response/mode"
     connection_test: "robot/{robot_id}/response/connection_test"
+    mapping: "robot/{robot_id}/responses/mapping"
   
   # 新增系统主题配置
   system:

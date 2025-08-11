@@ -597,8 +597,7 @@ class MQTTBridge:
                 }
             
             # 发送响应
-            response_topic = self._get_topic('reports', 'status')
-            self._publish_to_cloud(response_topic, json.dumps(response))
+            self._publish_to_cloud('reports', 'status', json.dumps(response))
             
         except json.JSONDecodeError:
             rospy.logerr("状态请求格式错误: {}".format(payload))
@@ -637,8 +636,7 @@ class MQTTBridge:
                             "error": "Failed to capture image",
                             "image_data": None
                         }
-                        topic = self._get_topic('responses', 'image')
-                        self._publish_to_cloud(topic, json.dumps(error_response))
+                        self._publish_to_cloud('responses', 'image', json.dumps(error_response))
                 
                 thread = threading.Thread(target=delayed_response)
                 thread.daemon = True
@@ -660,8 +658,7 @@ class MQTTBridge:
                 "current_mode": self.robot_status_cache.get("mode", "pause")
             }
             
-            topic = self._get_topic('responses', 'mode')
-            self._publish_to_cloud(topic, json.dumps(response))
+            self._publish_to_cloud('responses', 'mode', json.dumps(response))
             
         except json.JSONDecodeError:
             rospy.logerr("模式请求格式错误: {}".format(payload))
@@ -680,8 +677,7 @@ class MQTTBridge:
                 "latency_ms": (time.time() - data.get('timestamp', time.time())) * 1000
             }
             
-            topic = self._get_topic('responses', 'connection_test')
-            self._publish_to_cloud(topic, json.dumps(response))
+            self._publish_to_cloud('responses', 'connection_test', json.dumps(response))
             
         except json.JSONDecodeError:
             rospy.logerr("连接测试请求格式错误: {}".format(payload))
@@ -699,8 +695,7 @@ class MQTTBridge:
                 "pong": True
             }
             
-            topic = self._get_topic('system', 'pong')
-            self._publish_to_cloud(topic, json.dumps(response))
+            self._publish_to_cloud('system', 'pong', json.dumps(response))
             
         except json.JSONDecodeError:
             rospy.logerr("Ping请求格式错误: {}".format(payload))
@@ -747,8 +742,7 @@ class MQTTBridge:
                 "image_data": image_base64
             }
             
-            topic = self._get_topic('responses', 'image')
-            self._publish_to_cloud(topic, json.dumps(response))
+            self._publish_to_cloud('responses', 'image', json.dumps(response))
             
             rospy.loginfo("图像响应已发送: {}x{}, 质量={}, 大小={}KB".format(
                 cv_image.shape[1], cv_image.shape[0], quality, len(image_base64)//1024))
@@ -767,8 +761,7 @@ class MQTTBridge:
             self.robot_status_cache["timestamp"] = time.time()
             
             # 转发到云端
-            topic = self._get_topic('reports', 'status')
-            self._publish_to_cloud(topic, msg.data)
+            self._publish_to_cloud('reports', 'status', msg.data)
             
         except Exception as e:
             rospy.logerr("状态上报错误: {}".format(e))
@@ -776,8 +769,7 @@ class MQTTBridge:
     def _control_feedback_callback(self, msg):
         """控制反馈回调"""
         try:
-            topic = self._get_topic('reports', 'feedback')
-            self._publish_to_cloud(topic, msg.data)
+            self._publish_to_cloud('reports', 'feedback', msg.data)
             
         except Exception as e:
             rospy.logerr("反馈上报错误: {}".format(e))
@@ -786,8 +778,7 @@ class MQTTBridge:
         """云端报告回调"""
         try:
             # 转发到云端
-            topic = self._get_topic('reports', 'feedback')
-            self._publish_to_cloud(topic, msg.data)
+            self._publish_to_cloud('reports', 'feedback', msg.data)
             
         except Exception as e:
             rospy.logerr("云端报告错误: {}".format(e))
@@ -796,8 +787,7 @@ class MQTTBridge:
         """遥测数据回调"""
         try:
             # 转发到云端
-            topic = self._get_topic('reports', 'telemetry')
-            self._publish_to_cloud(topic, msg.data)
+            self._publish_to_cloud('reports', 'telemetry', msg.data)
             
         except Exception as e:
             rospy.logerr("遥测数据错误: {}".format(e))
@@ -805,8 +795,7 @@ class MQTTBridge:
     def _task_execution_status_callback(self, msg):
         """任务执行状态回调"""
         try:
-            topic = self._get_topic('reports', 'task_status')
-            self._publish_to_cloud(topic, msg.data)
+            self._publish_to_cloud('reports', 'task_status', msg.data)
             
         except Exception as e:
             rospy.logerr("任务执行状态上报错误: {}".format(e))
@@ -814,8 +803,7 @@ class MQTTBridge:
     def _task_feedback_callback(self, msg):
         """任务反馈回调"""
         try:
-            topic = self._get_topic('reports', 'task_feedback')
-            self._publish_to_cloud(topic, msg.data)
+            self._publish_to_cloud('reports', 'task_feedback', msg.data)
             
         except Exception as e:
             rospy.logerr("任务反馈上报错误: {}".format(e))
@@ -823,8 +811,7 @@ class MQTTBridge:
     def _task_status_callback(self, msg):
         """任务状态回调"""
         try:
-            topic = self._get_topic('reports', 'task_status')
-            self._publish_to_cloud(topic, msg.data)
+            self._publish_to_cloud('reports', 'task_status', msg.data)
             
         except Exception as e:
             rospy.logerr("任务状态上报错误: {}".format(e))
@@ -869,13 +856,12 @@ class MQTTBridge:
     def _publish_robot_status(self):
         """发布机器人状态"""
         if self.mqtt_connected:
-            topic = self._get_topic('reports', 'status')
             status_msg = {
                 "robot_id": self.robot_id,
                 "timestamp": time.time(),
                 "status": self.robot_status_cache.copy()
             }
-            self._publish_to_cloud(topic, json.dumps(status_msg))
+            self._publish_to_cloud('reports', 'status', json.dumps(status_msg))
     
     # ================== 后台线程 ==================
     
@@ -892,8 +878,7 @@ class MQTTBridge:
                         "uptime": time.time() - self.last_heartbeat
                     }
                     
-                    topic = self._get_topic('reports', 'heartbeat')
-                    self._publish_to_cloud(topic, json.dumps(heartbeat))
+                    self._publish_to_cloud('reports', 'heartbeat', json.dumps(heartbeat))
                     
                     self.last_heartbeat = time.time()
                     
