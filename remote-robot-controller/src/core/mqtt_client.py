@@ -24,6 +24,8 @@ class MQTTClient(QObject):
     # 定义信号
     status_received = pyqtSignal(dict)  # 状态响应
     image_received = pyqtSignal(dict)   # 图像响应
+    mapping_status_received = pyqtSignal(str)  # 建图状态
+    mapping_response_received = pyqtSignal(dict)  # 建图响应
     message_received = pyqtSignal(str, str)  # topic, payload
     connection_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
@@ -174,6 +176,7 @@ class MQTTClient(QObject):
             self.get_topic('responses', 'image'),
             self.get_topic('responses', 'mode'),
             self.get_topic('responses', 'connection_test'),
+            self.get_topic('responses', 'mapping'),
         ]
         
         # 系统主题
@@ -182,7 +185,12 @@ class MQTTClient(QObject):
             self.get_topic('system', 'broadcast'),
         ]
         
-        all_topics = report_topics + response_topics + system_topics
+        # 建图状态主题
+        mapping_topics = [
+            self.get_topic('reports', 'mapping_status'),
+        ]
+        
+        all_topics = report_topics + response_topics + system_topics + mapping_topics
         
         for topic in all_topics:
             self.subscribe(topic)
@@ -277,6 +285,23 @@ class MQTTClient(QObject):
             payload = {"command": int(command), "timestamp": time.time()}
         else:
             payload = {"command": str(command), "timestamp": time.time()}
+        return self.publish(topic, payload)
+    
+    def send_mapping_command(self, action, map_name=None):
+        """发送建图命令
+        action: 'start' | 'save' | 'set_name'
+        map_name: 地图名称（对于save和set_name动作）
+        """
+        topic = self.get_topic('commands', 'mapping')
+        payload = {
+            "action": action,
+            "timestamp": time.time()
+        }
+        
+        if map_name and action in ['save', 'set_name']:
+            payload['map_name'] = map_name
+            
+        self.logger.info("发送建图命令: {} {}".format(action, map_name or ''))
         return self.publish(topic, payload)
     
     def send_camera_command(self, capture=True):
@@ -447,6 +472,11 @@ class MQTTClient(QObject):
                 self.message_received.emit(topic, payload)
             elif '/task_feedback' in topic:
                 self.message_received.emit(topic, payload)
+            elif '/mapping_status' in topic:
+                # 处理建图状态
+                status = data.get('status', '')
+                self.mapping_status_received.emit(status)
+                self.logger.info("收到建图状态: {}".format(status))
             else:
                 # 其他消息
                 self.message_received.emit(topic, payload)
@@ -483,7 +513,10 @@ class MQTTClient(QObject):
             elif '/response/connection_test' in topic:
                 self.connection_test_response_received.emit(data)
                 self.logger.info("收到连接测试响应")
-            
+            elif '/response/mapping' in topic:
+                self.mapping_response_received.emit(data)
+                self.logger.info("收到建图响应")
+                
         except Exception as e:
             self.logger.error("响应消息处理失败: {}".format(e))
     

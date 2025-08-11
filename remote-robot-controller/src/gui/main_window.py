@@ -11,6 +11,7 @@ from gui.control_panel import ControlPanel
 from gui.status_panel import StatusPanel
 from gui.camera_panel import CameraPanel
 from gui.task_panel import TaskPanel
+from gui.mapping_panel import MappingPanel
 from gui.settings_dialog import SettingsDialog
 from core.robot_controller import RobotController
 from core.config_manager import ConfigManager
@@ -210,6 +211,10 @@ class MainWindow(QMainWindow):
         self.task_panel = TaskPanel()
         tab_widget.addTab(self.task_panel, "任务")
         
+        # 建图面板
+        self.mapping_panel = MappingPanel()
+        tab_widget.addTab(self.mapping_panel, "建图")
+        
         return tab_widget
     
     def create_status_bar(self):
@@ -228,6 +233,8 @@ class MainWindow(QMainWindow):
         self.robot_controller.connection_changed.connect(self.control_panel.set_connection_status)
         self.robot_controller.image_data_received.connect(self.handle_image_data)
         self.robot_controller.error_occurred.connect(self.show_error)
+        self.robot_controller.mapping_status_updated.connect(self.mapping_panel.update_mapping_status)
+        self.robot_controller.mapping_response_received.connect(self.mapping_panel.handle_mapping_response)
         
         # 控制面板信号
         self.control_panel.mode_changed.connect(self.robot_controller.set_mode)
@@ -242,6 +249,14 @@ class MainWindow(QMainWindow):
         
         # 任务面板信号
         self.task_panel.task_created.connect(self.robot_controller.send_task)
+        
+        # 建图面板信号
+        self.mapping_panel.start_mapping_requested.connect(self.handle_start_mapping)
+        self.mapping_panel.save_mapping_requested.connect(self.handle_save_mapping)
+        self.mapping_panel.set_map_name_requested.connect(self.handle_set_map_name)
+        
+        # 连接状态更新
+        self.robot_controller.connection_changed.connect(self.mapping_panel.set_connection_status)
     
     def request_camera_image(self):
         """请求相机图像"""
@@ -422,6 +437,39 @@ class MainWindow(QMainWindow):
     def toggle_statusbar(self, visible):
         """切换状态栏显示"""
         self.status_bar.setVisible(visible)
+    
+    def handle_start_mapping(self):
+        """处理开始建图请求"""
+        try:
+            print("[MAIN_WINDOW] 开始建图请求")
+            success = self.robot_controller.send_mapping_command('start')
+            if not success:
+                QMessageBox.warning(self, "警告", "发送建图命令失败，请检查连接状态")
+        except Exception as e:
+            self.logger.error("处理开始建图请求错误: {}".format(e))
+            QMessageBox.critical(self, "错误", "开始建图失败: {}".format(e))
+    
+    def handle_save_mapping(self, map_name):
+        """处理保存地图请求"""
+        try:
+            print("[MAIN_WINDOW] 保存地图请求: {}".format(map_name))
+            success = self.robot_controller.send_mapping_command('save', map_name)
+            if not success:
+                QMessageBox.warning(self, "警告", "发送保存地图命令失败，请检查连接状态")
+        except Exception as e:
+            self.logger.error("处理保存地图请求错误: {}".format(e))
+            QMessageBox.critical(self, "错误", "保存地图失败: {}".format(e))
+    
+    def handle_set_map_name(self, map_name):
+        """处理设置地图名称请求"""
+        try:
+            print("[MAIN_WINDOW] 设置地图名称请求: {}".format(map_name))
+            success = self.robot_controller.send_mapping_command('set_name', map_name)
+            if not success:
+                QMessageBox.warning(self, "警告", "发送设置地图名称命令失败，请检查连接状态")
+        except Exception as e:
+            self.logger.error("处理设置地图名称请求错误: {}".format(e))
+            QMessageBox.critical(self, "错误", "设置地图名称失败: {}".format(e))
     
     def show_about(self):
         """显示关于对话框"""

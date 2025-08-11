@@ -10,6 +10,7 @@ from datetime import datetime
 from std_msgs.msg import String, Bool, Int32
 from geometry_msgs.msg import Twist, PoseStamped
 from sensor_msgs.msg import Image
+from std_srvs.srv import Trigger
 from cv_bridge import CvBridge
 import cv2
 import base64
@@ -50,6 +51,9 @@ class MQTTBridge:
         
         # 初始化ROS发布器
         self._setup_ros_publishers()
+        
+        # 初始化ROS服务客户端
+        self._setup_ros_service_clients()
         
         # 初始化ROS订阅器
         self._setup_ros_subscribers()
@@ -165,6 +169,32 @@ class MQTTBridge:
         # 连接状态发布器
         self.mqtt_status_pub = rospy.Publisher('/mqtt_status', String, queue_size=1)
     
+    def _setup_ros_service_clients(self):
+        """设置ROS服务客户端"""
+        # 建图服务客户端
+        self.mapping_start_client = None
+        self.mapping_save_client = None
+        self.mapping_set_name_pub = None
+        
+        # 建图状态订阅
+        rospy.Subscriber('/mapping_manager/mapping_status', String, self._mapping_status_callback)
+        
+        try:
+            # 等待建图服务
+            rospy.wait_for_service('/mapping_manager/start_mapping', timeout=5.0)
+            rospy.wait_for_service('/mapping_manager/save_map', timeout=5.0)
+            
+            # 创建服务客户端
+            self.mapping_start_client = rospy.ServiceProxy('/mapping_manager/start_mapping', Trigger)
+            self.mapping_save_client = rospy.ServiceProxy('/mapping_manager/save_map', Trigger)
+            
+            # 创建地图名设置发布器
+            self.mapping_set_name_pub = rospy.Publisher('/mapping_manager/set_map_name', String, queue_size=1)
+            
+            rospy.loginfo("建图服务客户端初始化成功")
+        except rospy.ROSException:
+            rospy.logwarn("建图服务不可用，建图功能将被禁用")
+    
     def _setup_ros_subscribers(self):
         """设置ROS订阅器"""
         # 机器人状态订阅
@@ -179,6 +209,8 @@ class MQTTBridge:
         
         # 图像数据订阅（用于云端图像传输）
         rospy.Subscriber('/camera/rgb/image_raw', Image, self._image_callback)
+        
+        # 建图状态订阅（在_setup_ros_service_clients中已订阅）
     
     def _start_background_threads(self):
         """启动后台线程"""
@@ -270,6 +302,8 @@ class MQTTBridge:
                 self._handle_emergency_command(payload)
             elif topic.endswith('/command/task'):
                 self._handle_task_command(payload)
+            elif topic.endswith('/command/mapping'):
+                self._handle_mapping_command(payload)
             # 新增请求处理
             elif topic.endswith('/request/status'):
                 self._handle_status_request(payload)
@@ -428,6 +462,110 @@ class MQTTBridge:
             
         except Exception as e:
             rospy.logerr("任务指令处理错误: {}".format(e))
+
+    def _handle_mapping_command(self, payload):
+        """处理建图指令"""
+        try:
+            data = json.loads(payload)
+            action = data.get('action', '')
+            
+            if action == 'start':
+                # 开始建图
+                if self.mapping_start_client:
+                    try:
+                        response = self.mapping_start_client()
+                        if response.success:
+                            rospy.loginfo("建图已启动: {}".format(response.message))
+                            self._publish_to_cloud('responses/mapping', {
+                                "action": "start",
+                                "success": True,
+                                "message": response.message,
+                                "timestamp": time.time()
+                            })
+                        else:
+                            rospy.logwarn("启动建图失败: {}".format(response.message))
+                            self._publish_to_cloud('responses/mapping', {
+                                "action": "start",
+                                "success": False,
+                                "message": response.message,
+                                "timestamp": time.time()
+                            })
+                    except rospy.ServiceException as e:
+                        rospy.logerr("调用建图启动服务失败: {}".format(e))
+                        self._publish_to_cloud('responses/mapping', {
+                            "action": "start",
+                            "success": False,
+                            "message": "服务调用失败: {}".format(e),
+                            "timestamp": time.time()
+                        })
+                else:
+                    rospy.logwarn("建图服务不可用")
+                    
+            elif action == 'save':
+                # 保存地图
+                map_name = data.get('map_name', 'new_map')
+                
+                # 设置地图名称
+                if self.mapping_set_name_pub and map_name:
+                    self.mapping_set_name_pub.publish(String(data=map_name))
+                    rospy.sleep(0.5)  # 等待名称设置生效
+                
+                # 保存地图
+                if self.mapping_save_client:
+                    try:
+                        response = self.mapping_save_client()
+                        if response.success:
+                            rospy.loginfo("地图保存成功: {}".format(response.message))
+                            self._publish_to_cloud('responses/mapping', {
+                                "action": "save",
+                                "success": True,
+                                "message": response.message,
+                                "map_name": map_name,
+                                "timestamp": time.time()
+                            })
+                        else:
+                            rospy.logwarn("保存地图失败: {}".format(response.message))
+                            self._publish_to_cloud('responses/mapping', {
+                                "action": "save",
+                                "success": False,
+                                "message": response.message,
+                                "map_name": map_name,
+                                "timestamp": time.time()
+                            })
+                    except rospy.ServiceException as e:
+                        rospy.logerr("调用地图保存服务失败: {}".format(e))
+                        self._publish_to_cloud('responses/mapping', {
+                            "action": "save",
+                            "success": False,
+                            "message": "服务调用失败: {}".format(e),
+                            "map_name": map_name,
+                            "timestamp": time.time()
+                        })
+                else:
+                    rospy.logwarn("建图服务不可用")
+                    
+            elif action == 'set_name':
+                # 设置地图名称
+                map_name = data.get('map_name', '')
+                if self.mapping_set_name_pub and map_name:
+                    self.mapping_set_name_pub.publish(String(data=map_name))
+                    rospy.loginfo("地图名称已设置为: {}".format(map_name))
+                    self._publish_to_cloud('responses/mapping', {
+                        "action": "set_name",
+                        "success": True,
+                        "message": "地图名称已设置",
+                        "map_name": map_name,
+                        "timestamp": time.time()
+                    })
+                else:
+                    rospy.logwarn("地图名称设置失败：名称为空或服务不可用")
+            else:
+                rospy.logwarn("未知的建图指令: {}".format(action))
+                
+        except json.JSONDecodeError:
+            rospy.logerr("建图指令格式错误: {}".format(payload))
+        except Exception as e:
+            rospy.logerr("处理建图指令错误: {}".format(e))
 
     def _handle_status_request(self, payload):
         """处理状态请求"""
@@ -686,6 +824,22 @@ class MQTTBridge:
             
         except Exception as e:
             rospy.logerr("任务状态上报错误: {}".format(e))
+    
+    def _mapping_status_callback(self, msg):
+        """建图状态回调"""
+        try:
+            status_data = {
+                "status": msg.data,
+                "timestamp": time.time(),
+                "robot_id": self.robot_id
+            }
+            
+            # 发送建图状态到云端
+            self._publish_to_cloud('reports/mapping_status', status_data)
+            rospy.logdebug("建图状态已上报: {}".format(msg.data))
+            
+        except Exception as e:
+            rospy.logerr("建图状态上报错误: {}".format(e))
     
     def _image_callback(self, msg):
         """图像数据回调"""

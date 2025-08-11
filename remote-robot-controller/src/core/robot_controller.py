@@ -18,6 +18,8 @@ class RobotController(QObject):
     connection_changed = pyqtSignal(bool)
     error_occurred = pyqtSignal(str)
     image_data_received = pyqtSignal(dict)  # 图像数据接收
+    mapping_status_updated = pyqtSignal(str)  # 建图状态更新
+    mapping_response_received = pyqtSignal(dict)  # 建图响应
     
     def __init__(self, config):
         super().__init__()
@@ -36,6 +38,8 @@ class RobotController(QObject):
         self.mqtt_client.error_occurred.connect(self.error_occurred.emit)
         self.mqtt_client.status_received.connect(self.handle_status_response)
         self.mqtt_client.image_received.connect(self.handle_image_response)
+        self.mqtt_client.mapping_status_received.connect(self.mapping_status_updated.emit)
+        self.mqtt_client.mapping_response_received.connect(self.mapping_response_received.emit)
         
         # 机器人状态
         self.robot_status = {
@@ -99,6 +103,26 @@ class RobotController(QObject):
     def send_task(self, task_data):
         """发送任务"""
         return self.mqtt_client.send_task_command(task_data)
+    
+    def send_mapping_command(self, action, map_name=None):
+        """发送建图命令
+        action: 'start' | 'save' | 'set_name'
+        map_name: 地图名称（对于save和set_name动作）
+        """
+        if not self.is_connected():
+            self.logger.warning("建图命令发送失败：MQTT未连接")
+            return False
+            
+        try:
+            success = self.mqtt_client.send_mapping_command(action, map_name)
+            if success:
+                self.logger.info("建图命令已发送: {} {}".format(action, map_name or ''))
+            else:
+                self.logger.warning("建图命令发送失败")
+            return success
+        except Exception as e:
+            self.logger.error("发送建图命令出错: {}".format(e))
+            return False
     
     def handle_mqtt_message(self, topic, payload):
         """处理MQTT消息"""
