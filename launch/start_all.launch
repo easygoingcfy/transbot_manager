@@ -28,13 +28,13 @@
         <group if="$(eval arg('with_navigation') or arg('with_mapping'))">
             <!-- 激光雷达 - 导航和建图都需要 -->
             <include file="$(find transbot_nav)/launch/library/rplidar.launch"/>
-            <node pkg="tf" type="static_transform_publisher" name="base_link_to_laser"
-                  args="-0.03 0 0.13 3.1416 0 0  /base_link /laser  30"/>
-            
+            <node pkg="tf2_ros" type="static_transform_publisher" name="base_link_to_laser"
+                  args="-0.03 0 0.13 3.1416 0 0 base_link laser"/>
+
             <!-- 相机 -->
             <include file="$(find astra_camera)/launch/astrapro.launch"/>
-            <node pkg="tf" type="static_transform_publisher" name="base_link_to_camera"
-                  args="0.08 0 0.10403 -0.05 0 0  /base_link /camera_link  30"/>
+            <node pkg="tf2_ros" type="static_transform_publisher" name="base_link_to_camera"
+                  args="0.08 0 0.10403 -0.05 0 0 base_link camera_link"/>
         </group>
 
         <!-- 升降杆继电器控制（可选） -->
@@ -157,10 +157,6 @@
     </node>
     
     <!-- TF变换发布器 -->
-    <node pkg="tf2_ros" type="static_transform_publisher" name="map_odom_publisher" 
-          args="0 0 0 0 0 0 map odom" />
-    <node pkg="tf2_ros" type="static_transform_publisher" name="odom_base_publisher" 
-          args="0 0 0 0 0 0 odom base_link" />
     <node pkg="tf2_ros" type="static_transform_publisher" name="base_footprint_publisher" 
           args="0 0 0 0 0 0 base_link base_footprint" />
     
